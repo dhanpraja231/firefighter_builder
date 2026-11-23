@@ -7,7 +7,25 @@ Character models for the Three.js scene (SPEC.md section 3).
 `scout-1`, `suppression-1`, `rescue-1` and `commander` all use `pmx/Firefighter.pmx`, loaded with `MMDLoader`
 (see `runcycle/main.js`). Tell the four apart in the scene with a tint or a name tag.
 
-## Victims (`victims/*.glb`)
+## People (`people/*.glb`), used by `runcycle/`
+
+Realistic-proportion humans from [Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox) (MIT, see
+`people/LICENSE-Rocketbox.md`), converted to GLB with motion-capture walk and run clips baked in. Heights are in meters
+(1.73 to 1.82 m). Rebuild with `zsh models/tools/build_people.sh` (needs Blender in `/Applications`).
+
+| Persona | File | Clips |
+| --- | --- | --- |
+| victim-1 (elderly) | `Female_Adult_01.glb` | `f_walk_slow_01`, `f_walk_neutral`, `f_run_neutral` |
+| victim-2 (panicked) | `Male_Adult_01.glb` | `m_run_fast_01`, `m_run_neutral`, `m_walk_neutral` |
+| victim-3 (injured) | `Female_Adult_02.glb` | `f_walk_injured`, `f_run_injured`, `f_walk_neutral` |
+| victim-4 (stubborn) | `Business_Male_01.glb` | `m_walk_neutral`, `m_run_slow_01`, `m_run_neutral` |
+| spare | `Male_Adult_02.glb`, `Business_Female_01.glb` | walk and run |
+
+The clips move the root bone (`Bip01`) forward. For in-place playback, flatten the Z of the `Bip01.position` track,
+as `inPlace()` in `runcycle/main.js` does. Rocketbox doesn't label ages, so the avatar for the elderly persona was
+picked without seeing it and may need swapping.
+
+## Chibi victims (`victims/*.glb`), no longer used by `runcycle/`
 
 Rigged low-poly humans from the Quaternius Ultimate Animated Character Pack. Each GLB contains its own clips:
 `Idle`, `Walk`, `Run`, `Walk_Carry`, `Run_Carry`, `SitDown`, `StandUp`, `Defeat`, `Death`, `RecieveHit`, `Victory`,

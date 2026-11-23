@@ -8,20 +8,36 @@ import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js
 import { createRunClip, groundSpeed, RUN } from './runCycle.js';
 
 // Models outside the Vite public dir, resolved to dev-server URLs.
-const victimUrl = (name) => new URL(`../models/victims/${name}.glb`, import.meta.url).href;
+const personUrl = (name) => new URL(`../models/people/${name}.glb`, import.meta.url).href;
 const CAT_URL = new URL('../models/animals/Cat.fbx', import.meta.url).href;
 
 // Cast (SPEC.md sections 4 and 5). All firefighter roles share the PMX.
+// Victims are Microsoft Rocketbox avatars (real-world proportions, meters) built by
+// models/tools/build_people.sh; `clip` is one of the clips baked into each GLB.
 const FIREFIGHTERS = ['scout-1', 'suppression-1', 'rescue-1', 'commander'];
 const VICTIMS = [
-  { id: 'victim-1 (elderly)', file: 'OldClassy_Female', height: 0.9 },
-  { id: 'victim-2 (panicked)', file: 'Casual_Male', height: 0.97 },
-  { id: 'victim-3 (injured)', file: 'Worker_Female', height: 0.93 },
-  { id: 'victim-4 (stubborn)', file: 'Suit_Male', height: 0.98 },
-  { id: 'spare', file: 'OldClassy_Male', height: 0.93 },
-  { id: 'spare', file: 'Casual_Female', height: 0.93 },
-  { id: 'spare', file: 'Casual_Bald', height: 0.97 },
+  { id: 'victim-1 (elderly)', file: 'Female_Adult_01', clip: 'f_run_neutral' },
+  { id: 'victim-2 (panicked)', file: 'Male_Adult_01', clip: 'm_run_fast_01' },
+  { id: 'victim-3 (injured)', file: 'Female_Adult_02', clip: 'f_run_injured' },
+  { id: 'victim-4 (stubborn)', file: 'Business_Male_01', clip: 'm_run_slow_01' },
+  { id: 'spare', file: 'Male_Adult_02', clip: 'm_run_neutral' },
+  { id: 'spare', file: 'Business_Female_01', clip: 'f_run_neutral' },
 ];
+// Assumed real height of the firefighter model, used to convert meters to MMD units.
+const FIREFIGHTER_METERS = 1.8;
+
+// Rocketbox clips move the root bone forward. Remove that travel so the character
+// runs in place, and return the forward speed it had (meters per second) and its
+// direction (+1 or -1 along Z).
+function inPlace(clip) {
+  const track = clip.tracks.find((t) => t.name === 'Bip01.position');
+  if (!track) return { speed: 0, dir: 1 };
+  const v = track.values;
+  const z0 = v[2];
+  const travel = v[v.length - 1] - z0;
+  for (let i = 2; i < v.length; i += 3) v[i] = z0;
+  return { speed: Math.abs(travel) / clip.duration, dir: Math.sign(travel) || 1 };
+}
 
 const status = document.getElementById('status');
 
@@ -152,23 +168,37 @@ async function main() {
     tick();
   }
 
-  // Victims: second row behind the firefighters, each running with its own clip.
-  const victimSpacing = 8;
+  // Victims: second row behind the firefighters. Models are in meters, so one uniform
+  // scale keeps their real heights relative to the firefighter.
+  const unitsPerMeter = ffHeight / FIREFIGHTER_METERS;
+  const groundUnitsPerSec = groundSpeed(RUN);
+  const victimSpacing = 9;
   await Promise.all(
     VICTIMS.map(async (v, i) => {
-      const g = await gltf.loadAsync(victimUrl(v.file));
+      const g = await gltf.loadAsync(personUrl(v.file));
+      const model = g.scene;
+      model.scale.setScalar(unitsPerMeter);
+      enableShadows(model);
+      model.traverse((o) => {
+        if (o.isMesh) o.frustumCulled = false; // skinned bounds don't follow the animation
+      });
       const root = new THREE.Group();
-      root.add(g.scene);
-      fitHeight(g.scene, ffHeight * v.height);
-      enableShadows(g.scene);
+      root.add(model);
       root.position.set((i - (VICTIMS.length - 1) / 2) * victimSpacing, 0, -16);
       scene.add(root);
-      const mixer = new THREE.AnimationMixer(g.scene);
-      const clip = pickClip(g.animations, /^Run$/, /Run/, /Walk/);
+
+      const clip = g.animations.find((c) => c.name === v.clip) ?? pickClip(g.animations, /run/i, /walk/i);
+      const { speed, dir } = inPlace(clip);
+      if (dir < 0) model.rotation.y = Math.PI; // face +Z like the firefighters
+      const mixer = new THREE.AnimationMixer(model);
       mixer.clipAction(clip).play();
-      mixer.setTime(i * 0.17);
+      // play the clip at the speed where planted feet match the scrolling floor
+      mixer.timeScale = speed ? groundUnitsPerSec / (speed * unitsPerMeter) : 1;
+      mixer.setTime(i * 0.13);
       mixers.push(mixer);
-      addLabel(root, `${v.id} · ${v.file}`, ffHeight * v.height + 1.5, '#9fd3ff');
+
+      const height = new THREE.Box3().setFromObject(model).max.y;
+      addLabel(root, `${v.id} · ${v.file}`, height + 1.5, '#9fd3ff');
       tick();
     }),
   );
