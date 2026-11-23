@@ -1,0 +1,12 @@
+{
+  "agent_id": "victim-parent",
+  "name": "Parent",
+  "age": 34,
+  "mobility": "full",
+  "temperament": "panicked, protective",
+  "goal": "get the child out safely, will not leave without them",
+  "fears": ["losing sight of the child"],
+  "compliance": "refuses to move toward the exit unless the child is confirmed found",
+  "voice": "fast, clipped",
+  "memory": []
+}
