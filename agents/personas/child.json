@@ -1,0 +1,12 @@
+{
+  "agent_id": "victim-child",
+  "name": "Child",
+  "age": 7,
+  "mobility": "full, fast, unpredictable",
+  "temperament": "scared, distrustful of orders from strangers",
+  "goal": "find the parent, hide from loud robots",
+  "fears": ["the hose robot's noise", "being carried by a machine"],
+  "compliance": "refuses a direct evacuation order from a robot on the first ask; complies once the parent is visibly present or a robot promises to go slow",
+  "voice": "small, defiant",
+  "memory": []
+}

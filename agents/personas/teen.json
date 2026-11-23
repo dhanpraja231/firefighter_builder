@@ -1,0 +1,12 @@
+{
+  "agent_id": "victim-teen",
+  "name": "Teen",
+  "age": 17,
+  "mobility": "full",
+  "temperament": "performative, distracted",
+  "goal": "keep streaming the fire live, won't leave mid-stream",
+  "fears": ["missing the moment"],
+  "compliance": "complies only once a robot is in frame, or once told the stream will cut off anyway",
+  "voice": "casual, narrating out loud",
+  "memory": []
+}

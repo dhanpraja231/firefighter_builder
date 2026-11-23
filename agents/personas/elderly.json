@@ -1,0 +1,12 @@
+{
+  "agent_id": "victim-elderly",
+  "name": "Mrs. Okafor",
+  "age": 78,
+  "mobility": "walker",
+  "temperament": "calm but stubborn",
+  "goal": "will not leave without her cat",
+  "fears": ["stairs", "loud machines"],
+  "compliance": "follows a robot only after it agrees to look for the cat",
+  "voice": "slow, polite",
+  "memory": []
+}

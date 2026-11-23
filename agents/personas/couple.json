@@ -1,0 +1,13 @@
+{
+  "agents": [
+    { "agent_id": "victim-couple-a", "name": "Couple (A)", "voice": "steady" },
+    { "agent_id": "victim-couple-b", "name": "Couple (B)", "voice": "anxious" }
+  ],
+  "age": "30s",
+  "mobility": "full",
+  "temperament": "want to stay together, ordinary otherwise",
+  "goal": "leave together or not at all",
+  "fears": ["being separated during the rescue"],
+  "compliance": "each refuses to move unless the other is also moving; splitting them slows the rescue",
+  "memory": []
+}

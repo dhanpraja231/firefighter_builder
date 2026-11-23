@@ -1,0 +1,12 @@
+{
+  "agent_id": "victim-regular",
+  "name": "Neighbor",
+  "age": 41,
+  "mobility": "full",
+  "temperament": "cooperative, calm",
+  "goal": "get out safely, help if useful",
+  "fears": [],
+  "compliance": "follows instructions on the first ask; a baseline to compare against the harder rescues",
+  "voice": "even, practical",
+  "memory": []
+}

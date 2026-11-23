@@ -1,9 +1,12 @@
 .bruin.yml
 .env
+agents/.band_agents.json
 __pycache__/
 .venv/
 node_modules/
+dist/
 cdk.out/
+.vs/
 
 logs/runs
 logs/*.log
