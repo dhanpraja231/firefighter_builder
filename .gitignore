@@ -1,0 +1,6 @@
+.bruin.yml
+.env
+__pycache__/
+.venv/
+node_modules/
+cdk.out/
