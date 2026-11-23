@@ -51,6 +51,7 @@ Repo layout:
 | `bruin/` | Bruin pipeline (`pipeline.yml`, `assets/`) and its Dockerfile | Part 1 |
 | `infra/` | CDK (Python) stack for AWS | Part 1 |
 | `agents/` | Orchestrator, agent prompts, persona cards, Bedrock client | Parts 2, 4, 5 |
+| `story/` | Story outline, characters, twists, beats | Part 2 |
 | `scenarios/` | Scenario JSON files | Part 2 |
 | `web/` | Three.js scene, decision-log panel, approval modal | Part 3 |
 
@@ -250,7 +251,29 @@ Deploy: `aws login`, then `cdk bootstrap` once, then `cdk deploy`. Build and pus
 
 ## 2. Initial story
 
-Owner: TBD.
+Owner: TBD. The full story (characters, twists, beats) is in [story/README.md](story/README.md). This section is the summary plus the scenario file format.
+
+### Story outline
+
+- **Setting:** a 3-floor apartment block at night. The fire starts in a kitchen on floor 3.
+- **Style:** documentary. It should feel like an incident replay: bodycam and drone shots, on-screen captions with
+  timestamps, agent names and decisions, and no music-video drama.
+- **Cast:** 3 robots and an AI commander (section 5), and 6 victim units, 8 people in all (section 4).
+- **Twists the Director can use:**
+  - **Stairwell collapse:** cuts off a route mid-rescue.
+  - **Child goes missing:** the child slips away from the parent.
+- **Ending:** open. The agents decide, so a run can end with everyone saved, some saved or no one saved. A human
+  approves or declines the overall outcome of each run. That verdict will later feed a self-improvement loop (not built yet).
+- **Beats (roughly 2 minutes):**
+  1. Alarm, the fire starts, the robots arrive, the commander assigns floors.
+  2. The scout sweeps floors 2 and 3 and finds victims. Each one reacts in character.
+  3. Rescues are under way and the victims complicate them: the elderly person won't leave, the skeptic argues, the
+     teen keeps filming.
+  4. The Director triggers a twist.
+  5. The robots re-plan. Some victims get out, some may not.
+  6. End card with who was saved, the key decisions, and the human's verdict.
+
+### Scenario file
 
 Output: `scenarios/<scenario_id>.json`. The orchestrator loads it at run start and the Three.js scene loads the same
 file for geometry.
@@ -269,10 +292,8 @@ file for geometry.
   "robots": [{"agent_id": "scout-1", "role": "scout", "start": {"x": 1, "y": 0, "z": -2}}],
   "victims": [{"agent_id": "victim-1", "persona": "personas/elderly-resident.json", "room": "2B"}],
   "twists": [
-    {"id": "stair-collapse", "trigger": "after t_sim 60 if any robot on floor 2"},
-    {"id": "backdraft", "trigger": "when door to a burning room is opened"},
-    {"id": "power-loss", "trigger": "random after t_sim 40"},
-    {"id": "victim-moves", "trigger": "when a panicked victim hears fire nearby"}
+    {"id": "stair-collapse", "trigger": "after t_sim 60 if any robot is on floor 2 or 3"},
+    {"id": "child-missing", "trigger": "after the parent and child are found, before they reach the exit"}
   ]
 }
 ```
@@ -281,7 +302,7 @@ Scope:
 
 - One building, 2 or 3 floors, enough rooms for robots to split up.
 - A story premise of a few sentences that the Director agent gets as context.
-- 4 to 6 twists with clear trigger rules. The Director decides which fire at runtime, using the seed and current state,
+- The 2 twists above, with clear trigger rules. The Director decides which fire at runtime, using the seed and current state,
   and logs each one as a `world_event` with its reasoning.
 
 ## 3. Scene modelling
@@ -310,7 +331,20 @@ Output: the film is a screen recording of a replayed run, so replay must play cl
 
 Owner: TBD.
 
-Output: `agents/personas/<name>.json`, one per victim, at least 3.
+Output: `agents/personas/<name>.json`, one per victim unit (pairs share one file with two people listed).
+
+Cast (6 units, 8 people):
+
+| Unit | Who | What makes them hard to rescue |
+| --- | --- | --- |
+| `victim-elderly` | Stubborn elderly resident | Won't leave without their pet |
+| `victim-parent`, `victim-child` | Panicked parent and young child | Parent runs the wrong way, and the child can go missing (twist) |
+| `victim-skeptic` | Resident who distrusts robots | Refuses help from a machine and argues with it |
+| `victim-teen` | Teen filming on their phone | Won't leave, streaming the fire live |
+| `victim-regular` | Regular resident | Cooperative, follows instructions. A baseline to compare with the others. |
+| `victim-couple-a`, `victim-couple-b` | A normal couple | Want to stay together. Splitting them slows things down. |
+
+Pairs are separate agents (each has its own `agent_id` and memory) but start in the same room and try to stay together.
 
 ```json
 {
@@ -332,7 +366,7 @@ Behavior:
 - Victims are agents too. Each tick they get what they can see and hear and choose `speak`, `move` or `act`
   (open door, hide, follow robot).
 - `memory` grows during the run (what they saw, what robots told them) and is passed back in the next prompt.
-- Mix personalities so the robots have to adapt: panicked and moving, injured and immobile, stubborn and arguing.
+- The cast above is the mix. The robots have to adapt to each one.
 - Optional (Runware prize): generate a portrait per persona for the decision-log panel.
 
 ## 5. Firefighter agent roles
@@ -349,7 +383,8 @@ Owner: TBD.
 
 For each role, `agents/roles/<role>.md` holds:
 
-- System prompt with goal and personality (for example, a cautious scout and an impatient rescue robot).
+- System prompt with goal. All robots and the commander share one calm, professional, procedural voice (radio-style
+  call-outs). What varies between them is their job, not their personality.
 - Observation shape: own position, visible rooms, heat readings, known victims, last N messages, task from commander.
 - Output format: strict JSON matching the event schema (`type`, `payload`, `reasoning`, `confidence`).
 - Memory: short running notes kept by the orchestrator and fed back each tick.
@@ -382,7 +417,7 @@ Optional (BAND prize): use BAND for commander-to-robot task delegation instead o
 | AdaL demo video | Section 6, last hour |
 | Public GitHub repo before 6:00 PM | Section 6 |
 | Bonus: 3D | Part 3 |
-| Bonus: agent memory, adaptive behavior | Parts 4 and 5 memory fields |
+| Bonus: agent memory, adaptive behavior | Parts 4 and 5 memory fields, later the outcome-verdict self-improvement loop |
 | Bonus: voice | Optional TTS on `speak` events if time allows |
 
 ## 8. Open questions

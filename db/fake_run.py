@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 MODEL = "openai.gpt-oss-120b-1:0"
 VICTIMS = ["victim-1", "victim-2", "victim-3"]
-TWISTS = ["stair-collapse", "backdraft", "power-loss", "victim-moves"]
+TWISTS = ["stair-collapse", "child-missing"]
 
 
 def sql_str(value):
