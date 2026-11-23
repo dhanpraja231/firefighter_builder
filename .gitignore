@@ -4,3 +4,7 @@ __pycache__/
 .venv/
 node_modules/
 cdk.out/
+
+logs/runs
+logs/*.log
+*.py[cod]

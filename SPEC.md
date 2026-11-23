@@ -112,11 +112,21 @@ Event types:
 | `move` | any agent | Moved to `payload.position` |
 | `speak` | any agent | Said `payload.utterance` (shown as a speech bubble, optionally voiced) |
 | `decide` | robots, commander, victims | Chose a plan without acting yet (for example, task assignment) |
-| `act` | robots, victims | Did `payload.action` on `payload.target`. If `risky` is true, it only runs after approval. |
-| `request_approval` | commander or a robot | Asks the human to approve a risky `act`. The pending `act` follows only if approved. |
+| `act` | robots, victims | Did `payload.action` on `payload.target`. If `risky` is true, it must carry `approval_of_seq` (the request's `seq`) and only runs after approval. |
+| `request_approval` | commander or a robot | Asks the human to approve a risky action. `payload.action` and `payload.target` are the proposed action, `payload.actor` is the robot that will do it. |
 | `approval` | `human` | `payload.action` is `approve`, `deny` or `timeout_default`, and `payload.approval_of_seq` points at the request |
-| `world_event` | `director` or the sim | Fire spread, collapse, power loss, twist triggered. Details in `payload.world`. |
-| `status` | sim | Victim state change in `payload.victim_status`: `trapped`, `found`, `moving`, `rescued`, `lost` |
+| `world_event` | `director` or the sim | `payload.world.kind` is `fire_start`, `fire_spread` or `twist`. Twists also set `payload.world.twist` to the twist id from the scenario. |
+| `status` | sim | Victim state change. `agent_id` is the victim, `payload.victim_status` is `trapped`, `found`, `moving`, `rescued` or `lost`, `payload.target` is the robot involved. |
+
+The approval chain, as the Bruin checks expect it:
+
+```
+seq 9   commander  request_approval  {action: breach_door, target: d-2B, actor: rescue-1}
+seq 10  human      approval          {action: approve, approval_of_seq: 9}
+seq 11  rescue-1   act               {action: breach_door, target: d-2B, risky: true, approval_of_seq: 9}
+```
+
+A risky `act` without an approved request fails a blocking check, and the marts stop updating until it is fixed.
 
 Coordinates: meters, y-up, origin at the building's south-west corner on the ground floor, floor height 3 m
 (`y = floor * 3`). Part 2 and part 3 both use this.
@@ -178,14 +188,17 @@ create table raw.events (
 );
 ```
 
-Approvals are `approval` events in `raw.events`, so there is no separate approvals table.
+Approvals are `approval` events in `raw.events`, so there is no separate approvals table. The DDL lives in
+`db/schema.sql`. `db/fake_run.py --seed N` prints SQL for one fake run, for testing and as sample data for the 3D scene.
 
 `staging` and `mart` are owned by Bruin.
 
 ### 1.4 Bruin pipeline
 
-`bruin/` holds `pipeline.yml`, `assets/`, and a Dockerfile based on `ghcr.io/bruin-data/bruin`. `.bruin.yml` (the
-connection config) is never committed. In AWS it comes from Secrets Manager; locally each person keeps their own.
+`bruin/` holds `pipeline.yml`, `assets/`, `config.production.yml` and a Dockerfile based on
+`ghcr.io/bruin-data/bruin:v0.11.832`. Locally, each person copies `.bruin.example.yml` to `.bruin.yml` (gitignored).
+On ECS, `config.production.yml` reads the DB host and credentials from env vars that ECS injects from Secrets Manager.
+See `bruin/README.md` for commands.
 
 Assets (all `pg.sql`, materialized as tables):
 
@@ -195,7 +208,7 @@ Assets (all `pg.sql`, materialized as tables):
 | `mart.decision_log` | `staging.events` | One row per `decide`, `act`, `request_approval`: agent, role, action, target, reasoning, confidence, and for risky acts the approval outcome and how long the human took |
 | `mart.agent_metrics` | `staging.events` | Per run and agent: decision count, avg and p95 LLM latency, tokens, approvals requested, approved, denied |
 | `mart.victim_outcomes` | `staging.events` | Per run and victim: time found, time rescued, final status, which robot rescued them |
-| `mart.run_summary` | all of the above | Per run: seed, twists triggered, victims rescued and lost, sim duration, approvals, ending label |
+| `mart.run_summary` | all of the above | Per run: seed, twists triggered, victims rescued and lost, sim duration, approvals, ending (`everyone saved`, `some saved`, `no one saved`, `in progress`) |
 
 Quality checks:
 
@@ -204,6 +217,7 @@ Quality checks:
 - Custom, blocking: every `act` with `risky = true` has a matching `approval` with `approve`.
 - Custom, blocking: `seq` has no gaps within a run.
 - Custom, non-blocking: every `decide` and `act` from an LLM has non-empty `reasoning`.
+- One row per key in `mart.agent_metrics` and `mart.run_summary`, `accepted_values` on victim status and ending.
 
 CI: GitHub Actions runs `bruin validate bruin/` using `bruin-data/setup-bruin`.
 
@@ -217,8 +231,8 @@ CDK (Python), one stack, region us-east-1 (same region as the Bedrock models we 
 - ECR repositories `api` and `bruin`.
 - ECS cluster:
   - API service: 1 Fargate task (0.5 vCPU, 1 GB) behind an ALB, logs to CloudWatch.
-  - Bruin task definition: entrypoint reads the `.bruin.yml` secret, then runs
-    `bruin run . --environment production`, logs to CloudWatch.
+  - Bruin task definition (ARM64): the `bruin/` image, with `PGHOST`, `PGUSER` and `PGPASSWORD` injected from the
+    RDS secret. It runs `bruin run --environment production --force`, logs to CloudWatch.
 - EventBridge Scheduler: runs the Bruin task every 2 minutes during the demo window. Disable after the event.
 - IAM:
   - API task role: `ecs:RunTask` on the Bruin task definition, `iam:PassRole` for the Bruin roles only.

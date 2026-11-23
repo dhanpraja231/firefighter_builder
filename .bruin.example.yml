@@ -1,0 +1,16 @@
+# Local config. Copy to .bruin.yml at the repo root (it is gitignored).
+# Local test DB:
+#   docker run -d --name ff-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=firefighter -p 5433:5432 postgres:17
+# Production config used on ECS lives in bruin/config.production.yml.
+default_environment: default
+environments:
+  default:
+    connections:
+      postgres:
+        - name: pg
+          host: localhost
+          port: 5433
+          username: postgres
+          password: postgres
+          database: firefighter
+          ssl_mode: disable
