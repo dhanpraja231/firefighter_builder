@@ -1,0 +1,33 @@
+name: bruin
+
+on:
+  push:
+    paths: ["bruin/**", "db/**", ".github/workflows/bruin.yml"]
+  pull_request:
+    paths: ["bruin/**", "db/**"]
+
+jobs:
+  validate-and-run:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: firefighter
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      DB: postgresql://postgres@localhost:5433/firefighter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bruin-data/setup-bruin@main
+      - name: Load schema and fake runs
+        run: |
+          psql "$DB" -v ON_ERROR_STOP=1 -f db/schema.sql
+          for s in 1 2 3; do python3 db/fake_run.py --seed $s | psql "$DB" -q -v ON_ERROR_STOP=1; done
+      - run: cp .bruin.example.yml .bruin.yml
+      - run: bruin validate bruin/
+      - run: bruin run bruin/

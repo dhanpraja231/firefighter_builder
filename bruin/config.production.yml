@@ -1,0 +1,14 @@
+# Used inside the ECS container. No secrets here: ECS injects PGHOST, PGUSER and
+# PGPASSWORD from Secrets Manager; PGDATABASE, PGPORT and PGSSLMODE are plain env vars.
+default_environment: production
+environments:
+  production:
+    connections:
+      postgres:
+        - name: pg
+          host: ${PGHOST}
+          port: ${PGPORT}
+          username: ${PGUSER}
+          password: ${PGPASSWORD}
+          database: ${PGDATABASE}
+          ssl_mode: ${PGSSLMODE}
