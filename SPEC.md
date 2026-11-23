@@ -51,6 +51,7 @@ Repo layout:
 | `bruin/` | Bruin pipeline (`pipeline.yml`, `assets/`) and its Dockerfile | Part 1 |
 | `infra/` | CDK (Python) stack for AWS | Part 1 |
 | `agents/` | Orchestrator, agent prompts, persona cards, Bedrock client | Parts 2, 4, 5 |
+| `story/` | Story outline, characters, twists, beats | Part 2 |
 | `scenarios/` | Scenario JSON files | Part 2 |
 | `web/` | Three.js scene, decision-log panel, approval modal | Part 3 |
 
@@ -250,7 +251,7 @@ Deploy: `aws login`, then `cdk bootstrap` once, then `cdk deploy`. Build and pus
 
 ## 2. Initial story
 
-Owner: TBD.
+Owner: TBD. The full story (characters, twists, beats) is in [story/README.md](story/README.md). This section is the summary plus the scenario file format.
 
 ### Story outline
 
