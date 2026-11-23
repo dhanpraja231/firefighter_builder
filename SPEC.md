@@ -341,8 +341,7 @@ For each role, `agents/roles/<role>.md` holds:
 - Memory: short running notes kept by the orchestrator and fed back each tick.
 - Default action if the human times out.
 
-LLM: an open-weight model on Bedrock through the Converse API. The model id is one setting in `agents/config.py` so we
-can swap it. No sponsor offers free LLM credits, so keep prompts short and one call per agent per tick.
+LLM: `openai.gpt-oss-120b-1:0` on Bedrock (us-east-1) through the Converse API. No sponsor offers free LLM credits, so keep prompts short and one call per agent per tick.
 
 Optional (BAND prize): use BAND for commander-to-robot task delegation instead of plain function calls.
 
@@ -374,7 +373,7 @@ Optional (BAND prize): use BAND for commander-to-robot task delegation instead o
 
 ## 8. Open questions
 
-- Bedrock model: confirmed `openai.gpt-oss-120b-1:0` works on demand in us-east-1 (about 0.4 s for a short reply). Fallbacks: `openai.gpt-oss-20b-1:0`, `qwen.qwen3-32b-v1:0`.
+- Bedrock model: confirmed `openai.gpt-oss-120b-1:0` works on demand in us-east-1 (about 0.4 s for a short reply).
 - Who owns parts 2, 4 and 5.
 - Live SSE or replay only for the recorded film. Replay is safer for recording.
 - Whether the human approver is a teammate clicking live during recording, or scripted approvals for a repeatable take.
