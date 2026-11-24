@@ -1,0 +1,16 @@
+{
+  "scenario_id": "apartment-3f",
+  "label": "Harbor Court Apartments (simulated)",
+  "source": "glasser:rentcast:/avm/value",
+  "scrubbed": true,
+  "note": "Scenario is a 3-floor multifamily walkup. Glasser fields are age/size risk signals from a scrubbed parcel lookup; property_type is parcel metadata and must not override scenario layout.",
+  "property_type": "Single Family",
+  "year_built": 1973,
+  "bedrooms": 3,
+  "bathrooms": 2,
+  "living_area_sqft": 1878,
+  "lot_size_sqft": 8843,
+  "zip": "78244",
+  "glasser_charge_usd": "0.0814",
+  "glasser_run_id": "2d6d7c1f-3c0c-439b-9d14-8afbf8f3e7e5"
+}

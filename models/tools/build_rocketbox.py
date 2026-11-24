@@ -78,23 +78,58 @@ for mat in {s.material for m in meshes for s in m.material_slots if s.material}:
         nt.links.new(tn.outputs['Color'], nm.inputs['Color'])
         nt.links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
 
-# --- animations: import, move the action onto the avatar's rig ------------
+# --- animations: retarget onto the avatar's rig ----------------------------
+# The animation FBXs have a different rest pose from the avatars, so their keys
+# (which are relative to the rest pose) can't be copied across: the legs come out
+# twisted and the knees bend backwards. Instead, constrain every avatar bone to the
+# source bone's orientation in armature space and bake that into new keys.
 arm.animation_data_create()
+scene = bpy.context.scene
 for path in anim_paths:
     clip = os.path.basename(path).replace('.max.fbx', '').replace('.fbx', '')
     new = import_fbx(path)
     src = next(o for o in new if o.type == 'ARMATURE')
-    action = src.animation_data.action
+    src_action = src.animation_data.action
+    f0, f1 = (int(round(x)) for x in src_action.frame_range)
+
+    for pb in arm.pose.bones:
+        if pb.name not in src.pose.bones:
+            continue
+        c = pb.constraints.new('COPY_ROTATION')
+        c.target, c.subtarget = src, pb.name
+        c.owner_space = c.target_space = 'POSE'
+        if pb.parent is None or pb.name == 'Bip01 Pelvis':
+            c = pb.constraints.new('COPY_LOCATION')
+            c.target, c.subtarget = src, pb.name
+            c.owner_space = c.target_space = 'POSE'
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+    for o in bpy.data.objects:
+        o.select_set(o == arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode='POSE')
+    bpy.ops.pose.select_all(action='SELECT')
+    bpy.ops.nla.bake(frame_start=f0, frame_end=f1, only_selected=False, visual_keying=True,
+                     clear_constraints=True, use_current_action=False, bake_types={'POSE'})
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    action = arm.animation_data.action
     action.name = clip
     action.use_fake_user = True
-    # The root bone (Bip01) still carries the forward travel; the web app strips it
-    # at load time (see runcycle/main.js, inPlace()).
+    # Root motion is on the armature object itself in these files. Copy those curves
+    # over unchanged; the web app strips the forward travel (runcycle/main.js, inPlace()).
+    for fc in src_action.fcurves:
+        if fc.data_path in ('location', 'rotation_euler', 'rotation_quaternion'):
+            dst = action.fcurves.new(fc.data_path, index=fc.array_index)
+            for kp in fc.keyframe_points:
+                dst.keyframe_points.insert(kp.co[0], kp.co[1], options={'FAST'})
+    arm.animation_data.action = None
+
     for o in new:
         bpy.data.objects.remove(o)
     track = arm.animation_data.nla_tracks.new()
     track.name = clip
-    start = int(action.frame_range[0])
-    strip = track.strips.new(clip, start, action)
+    track.strips.new(clip, f0, action)
     track.mute = True
 for a in list(bpy.data.actions):
     if '|' in a.name:  # helper/footstep takes from the imported files

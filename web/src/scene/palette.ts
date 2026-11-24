@@ -1,8 +1,10 @@
 import type { FloorId } from "./types";
 
 export const palette = {
-  sky: "#070b16",
-  fog: "#0a1020",
+  /** Mid-night blue — used for fog / clearColor so the sky isn't a black void. */
+  sky: "#152038",
+  fog: "#1a2438",
+  horizon: "#4a3f32",
   brick: "#7d4a44",
   plaster: "#f2e7d7",
   plasterDeep: "#e2d2bc",
@@ -29,6 +31,8 @@ export const palette = {
   hydrant: "#d23b32",
   moon: "#e7eefc",
   tree: "#1e3a34",
+  grass: "#2a3f28",
+  grassLit: "#355a32",
 } as const;
 
 export interface FloorAccent {

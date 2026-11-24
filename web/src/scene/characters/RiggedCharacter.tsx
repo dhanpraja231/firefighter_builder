@@ -4,7 +4,7 @@ import { Html, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { AgentFrame, AnimName } from "../../timeline/replay";
-import { MODEL_URLS, type CharacterVisual } from "./visual";
+import { RIG_URLS, type CharacterVisual } from "./visual";
 
 /**
  * Which clip(s) in the Quaternius rigs play for each body state, first match wins. Missing clips
@@ -136,7 +136,7 @@ export function RiggedCharacter({
   frame: AgentFrame;
   paused?: boolean;
 }) {
-  const gltf = useGLTF(MODEL_URLS[visual.model]);
+  const gltf = useGLTF(RIG_URLS[visual.rig ?? "casualMale"]);
   const built = useMemo(() => build(gltf, visual), [gltf, visual]);
   const group = useRef<THREE.Group>(null);
   const current = useRef<THREE.AnimationAction | null>(null);

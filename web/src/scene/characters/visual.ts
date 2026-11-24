@@ -7,11 +7,12 @@ import suitMale from "../../../../models/victims/Suit_Male.glb?url";
 import workerFemale from "../../../../models/victims/Worker_Female.glb?url";
 
 /**
- * The rigged Quaternius characters the `character` branch added under `models/victims/`.
- * Each GLB carries its own animation clips (Idle, Walk, Run, Walk_Carry, Run_Carry,
- * RecieveHit, Death, Victory, PickUp, SitDown, Defeat, ...).
+ * Rigged Quaternius characters (`models/victims/`). Each GLB carries its own animation clips
+ * (Idle, Walk, Run, Walk_Carry, RecieveHit, Death, Victory, PickUp, SitDown, Defeat, ...), which is
+ * what lets residents visibly react: plead when found, flinch in smoke, collapse when lost,
+ * celebrate when rescued. `RiggedCharacter` plays them.
  */
-export const MODEL_URLS = {
+export const RIG_URLS = {
   casualBald,
   casualFemale,
   casualMale,
@@ -21,17 +22,23 @@ export const MODEL_URLS = {
   workerFemale,
 } as const;
 
-export type ModelKey = keyof typeof MODEL_URLS;
+export type RigKey = keyof typeof RIG_URLS;
 export type CharacterKind = "robot" | "victim";
 
+/** One agent's look. Shared by both body implementations (see `Character.tsx` and `RiggedCharacter.tsx`). */
 export interface CharacterVisual {
   label: string;
   kind: CharacterKind;
-  /** Accent color: tints the shirt (and vest/hat where the rig has them). */
+  /** Accent color: name tag, shirt tint, helmet. */
   color: string;
-  /** Standing height in meters; the rig is scaled to this. */
+  /** Real-world height in meters the body is scaled to. */
   height?: number;
-  model: ModelKey;
-  /** Adds a helmet in the accent color (the firefighter robots). */
+  /** Victims (Character.tsx fallback): Rocketbox model file in `public/people/` (no extension). */
+  model?: string;
+  /** Victims (Character.tsx fallback): walk clip to use from that model. */
+  walkClip?: string;
+  /** Victims: which Quaternius rig `RiggedCharacter` plays. Robots use the firefighter PMX in `Character.tsx`. */
+  rig?: RigKey;
+  /** Adds a hard hat in the accent color on a Quaternius rig. */
   helmet?: boolean;
 }

@@ -93,7 +93,7 @@ export function Engine9Scene({
 
   return (
     <group name="engine9-scene">
-      <fog attach="fog" args={[palette.fog, 24, 95]} />
+      <fog attach="fog" args={[palette.fog, 48, 145]} />
       <CameraDirector cue={cameraCue} closeupCue={closeupCue} closeupTarget={closeupTarget} />
 
       <NightEnvironment exterior={exterior} />

@@ -1,5 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Engine9Scene } from "../scene/Engine9Scene";
+import { Character } from "../scene/characters/Character";
 import { RiggedCharacter } from "../scene/characters/RiggedCharacter";
 import { activeMomentAtTime, agentFramesAtTime, worldStateAtTime } from "../timeline/replay";
 import { visualFor } from "../timeline/roster";
@@ -53,18 +54,27 @@ export function DemoScene({ events, t, paused = false }: { events: TimelineEvent
       closeupCue={closeupTarget ? closeupCue : undefined}
       closeupTarget={closeupTarget}
     >
-      {/* Models load asynchronously; the building and fire render immediately and characters pop in. */}
+      {/* Bodies load asynchronously; the building and fire render immediately and characters pop in.
+          Robots are the firefighter PMX (run cycle + leg IK); residents are rigs with reaction clips. */}
       <Suspense fallback={null}>
         {Object.entries(frames).map(([agentId, frame]) => {
           if (agentId === "director" || agentId === "human") return null;
-          return (
-            <RiggedCharacter
-              key={agentId}
-              visual={visualFor(agentId, roleByAgent[agentId] ?? "")}
-              frame={frame}
-              paused={paused}
-            />
-          );
+          const visual = visualFor(agentId, roleByAgent[agentId] ?? "");
+          if (visual.kind === "robot") {
+            return (
+              <Character
+                key={agentId}
+                position={frame.position}
+                heading={frame.heading}
+                visual={visual}
+                utterance={frame.utterance}
+                moving={frame.moving && !paused}
+                speed={frame.moving && !paused ? frame.speed : 0}
+                smooth
+              />
+            );
+          }
+          return <RiggedCharacter key={agentId} visual={visual} frame={frame} paused={paused} />;
         })}
       </Suspense>
     </Engine9Scene>
