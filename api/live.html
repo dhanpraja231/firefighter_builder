@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scene and Ops</title>
+<style>
+:root { color-scheme: light; --bg: #f6f5f2; --surface: #fcfcfb; --ink: #161513; --ink-3: #75736d; --line: #e3e1db; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-3: #a6a39b; --line: #34332f; } }
+:root[data-theme="dark"] { color-scheme: dark; --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-3: #a6a39b; --line: #34332f; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 13px/1.4 "IBM Plex Sans", system-ui, sans-serif; display: flex; flex-direction: column; }
+.bar { display: flex; gap: 18px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.bar b { font-weight: 600; }
+.bar a { color: var(--ink-3); }
+.panes { flex: 1; display: grid; grid-template-columns: var(--split, 50%) 6px minmax(0, 1fr); min-height: 0; }
+.panes.solo { grid-template-columns: 1fr; }
+.panes.solo .handle, .panes.solo .ops { display: none; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.toggle input { accent-color: var(--ink); width: 15px; height: 15px; margin: 0; }
+iframe { width: 100%; height: 100%; border: 0; background: var(--surface); }
+.handle { cursor: col-resize; background: var(--line); }
+.handle:hover { background: var(--ink-3); }
+@media (max-width: 800px) { .panes { grid-template-columns: 1fr; grid-template-rows: 50% 50%; } .handle { display: none; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>Scene and ops</b>
+  <label class="toggle"><input type="checkbox" id="showOps"> Show Bruin dashboard</label>
+  <span style="margin-left:auto"><a href="http://localhost:5173" target="_blank" rel="noopener">open scene alone</a> · <a href="/" target="_blank" rel="noopener">open dashboard alone</a></span>
+</div>
+<div class="panes solo" id="panes">
+  <iframe src="http://localhost:5173" title="3D scene" allow="fullscreen"></iframe>
+  <div class="handle" id="handle" title="Drag to resize"></div>
+  <iframe class="ops" data-src="/" title="Ops dashboard"></iframe>
+</div>
+<script>
+const panes = document.getElementById("panes"), handle = document.getElementById("handle");
+const box = document.getElementById("showOps"), ops = panes.querySelector(".ops");
+function applyOps(on) {
+  panes.classList.toggle("solo", !on);
+  if (on && !ops.src) ops.src = ops.dataset.src;  // load the dashboard only when it's shown
+  try { localStorage.setItem("ff-show-ops", on ? "1" : "0"); } catch {}
+}
+let saved = false;
+try { saved = localStorage.getItem("ff-show-ops") === "1"; } catch {}
+box.checked = saved; applyOps(saved);
+box.onchange = () => applyOps(box.checked);
+handle.onpointerdown = (e) => {
+  handle.setPointerCapture(e.pointerId);
+  panes.querySelectorAll("iframe").forEach((f) => f.style.pointerEvents = "none");
+  handle.onpointermove = (m) => panes.style.setProperty("--split", `${Math.min(80, Math.max(20, (m.clientX / innerWidth) * 100))}%`);
+  handle.onpointerup = () => { handle.onpointermove = null; panes.querySelectorAll("iframe").forEach((f) => f.style.pointerEvents = ""); };
+};
+</script>
+</body>
+</html>

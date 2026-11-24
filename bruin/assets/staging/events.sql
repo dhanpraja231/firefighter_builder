@@ -93,6 +93,8 @@ select
   (e.payload -> 'position' ->> 'y')::real                 as y,
   (e.payload -> 'position' ->> 'z')::real                 as z,
   e.payload -> 'world'                                    as world,
+  e.payload ->> 'twist'                                   as twist,
+  e.payload ->> 'cause'                                   as cause,
   e.reasoning,
   e.confidence,
   e.model,

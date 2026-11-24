@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fire Rescue Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f5f2;
+  --surface: #fcfcfb;
+  --ink: #161513;
+  --ink-2: #52514e;
+  --ink-3: #75736d;
+  --line: #e3e1db;
+  --line-2: #eeece7;
+  --hover: #f0eee9;
+  --accent: #b93a12;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --neutral-mark: #b5b2aa;
+  --good: #18794e;
+  --warn: #a35c00;
+  --bad: #c0362c;
+  --good-bg: #e7f3ec;
+  --warn-bg: #fbf0dd;
+  --bad-bg: #fbe9e7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c9c7bf; --ink-3: #a6a39b;
+    --line: #34332f; --line-2: #262523; --hover: #232220; --accent: #f0703f;
+    --series-1: #3987e5; --series-2: #d95926; --neutral-mark: #6b6963;
+    --good: #4cc38a; --warn: #f0b44c; --bad: #f07a6e; --good-bg: #16291f; --warn-bg: #2d2412; --bad-bg: #2f1714;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c9c7bf; --ink-3: #a6a39b;
+  --line: #34332f; --line-2: #262523; --hover: #232220; --accent: #f0703f;
+  --series-1: #3987e5; --series-2: #d95926; --neutral-mark: #6b6963;
+  --good: #4cc38a; --warn: #f0b44c; --bad: #f07a6e; --good-bg: #16291f; --warn-bg: #2d2412; --bad-bg: #2f1714;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 "IBM Plex Sans", system-ui, sans-serif; }
+.mono, code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+button { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; transition: border-color .12s, background .12s; }
+button:hover { border-color: var(--ink-3); }
+button:disabled { color: var(--ink-3); cursor: default; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 28px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.top h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.top .where { color: var(--ink-3); font-size: 13px; margin-left: 12px; }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 0 28px 64px; }
+h2 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 12px; }
+.section { padding-top: 32px; }
+.section + .section { border-top: 1px solid var(--line); margin-top: 32px; }
+.muted { color: var(--ink-3); }
+
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 1px 8px 1px 7px; border-radius: 999px; white-space: nowrap; }
+.st::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.st.good { color: var(--good); background: var(--good-bg); }
+.st.warn { color: var(--warn); background: var(--warn-bg); }
+.st.bad { color: var(--bad); background: var(--bad-bg); }
+.st.idle { color: var(--ink-3); background: var(--line-2); }
+
+.pipe { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 40px; }
+.verdict { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 6px; display: flex; align-items: center; gap: 12px; }
+.verdict .pulse { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.lede { color: var(--ink-2); margin: 0 0 22px; max-width: 60ch; }
+.history { display: flex; align-items: flex-end; gap: 3px; height: 54px; padding-bottom: 1px; border-bottom: 1px solid var(--line); }
+.history .bar { flex: 1 1 0; max-width: 14px; min-height: 6px; border-radius: 3px 3px 0 0; background: var(--good); opacity: .85; cursor: default; }
+.history .bar.bad { background: var(--bad); opacity: 1; }
+.history .bar.run { background: var(--neutral-mark); }
+.history .bar:hover { opacity: 1; outline: 2px solid var(--surface); }
+.history-axis { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+.flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 4px; margin-top: 26px; }
+.flow .node { display: inline-flex; flex-direction: column; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; }
+.flow .node b { font: 500 12.5px "IBM Plex Mono", monospace; }
+.flow .node span { font-size: 12px; color: var(--ink-3); }
+.flow .node.bad { border-color: var(--bad); }
+.flow .arrow { color: var(--ink-3); padding: 0 4px; }
+.flow .marts { display: flex; flex-direction: column; gap: 6px; }
+.numbers { display: flex; gap: 32px; margin-top: 24px; flex-wrap: wrap; }
+.numbers div { min-width: 90px; }
+.numbers b { display: block; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.numbers span { color: var(--ink-3); font-size: 12px; }
+
+.checks { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); max-height: 440px; overflow: auto; }
+.checks .grp { padding: 10px 14px 4px; font: 500 12.5px "IBM Plex Mono", monospace; color: var(--ink-2); position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--line-2); display: flex; justify-content: space-between; }
+.checks .row { display: grid; grid-template-columns: minmax(0, 1fr) auto 52px; gap: 12px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line-2); font-size: 13px; }
+.checks .row:last-child { border-bottom: 0; }
+.checks .row .ms { text-align: right; color: var(--ink-3); font: 12px "IBM Plex Mono", monospace; }
+
+.runbar { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 26px; scrollbar-width: thin; }
+.runbtn { text-align: left; flex: none; padding: 8px 12px; border-radius: 6px; min-width: 150px; }
+.runbtn .t { display: block; font-weight: 500; }
+.runbtn .m { display: block; color: var(--ink-3); font-size: 12px; }
+.runbtn.sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+
+.hero { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 44px; margin-bottom: 18px; }
+.hero .ending { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.hero .k { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+.hero .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.capture { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 28px; color: var(--ink-2); }
+.capture .st { margin-top: 1px; }
+
+.learn { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; margin: 0 0 32px; }
+.verdict-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.verdict-row .q { color: var(--ink-2); margin-right: 4px; }
+button.approve:hover { border-color: var(--good); color: var(--good); }
+button.decline:hover { border-color: var(--bad); color: var(--bad); }
+.lessons { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.lessons li { padding: 10px 0; border-bottom: 1px solid var(--line-2); }
+.lessons .role { font: 500 12px "IBM Plex Mono", monospace; color: var(--ink-3); margin-right: 8px; }
+.lessons .ev { color: var(--ink-3); font-size: 12.5px; margin-top: 2px; }
+.curve { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.curve svg { display: block; width: 100%; }
+.curve text { font: 11px "IBM Plex Mono", monospace; fill: var(--ink-3); }
+.curve .ln { fill: none; stroke: var(--series-1); stroke-width: 2; }
+.curve .gl { stroke: var(--line-2); }
+@media (max-width: 960px) { .learn { grid-template-columns: minmax(0, 1fr); gap: 24px; } }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--ink-2); margin: -4px 0 10px; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.lanes { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow-x: auto; }
+.lanes svg { display: block; }
+.lanes text { font: 12px "IBM Plex Mono", monospace; fill: var(--ink-2); }
+.lanes .axis text { fill: var(--ink-3); font-size: 11px; }
+.lanes .grid { stroke: var(--line-2); }
+.lanes .lane-sep { stroke: var(--line-2); }
+.lanes .world { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 3; opacity: .7; }
+.lanes .mk { cursor: pointer; }
+.lanes .mk:hover, .lanes .mk.on { stroke: var(--ink); stroke-width: 2; }
+
+.tip { position: fixed; z-index: 10; pointer-events: none; max-width: 340px; background: var(--ink); color: var(--surface); padding: 8px 10px; border-radius: 6px; font-size: 12.5px; line-height: 1.45; opacity: 0; transition: opacity .08s; }
+.tip b { font-weight: 600; }
+.tip .tm { opacity: .7; font: 11.5px "IBM Plex Mono", monospace; }
+
+.cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 40px; margin-top: 36px; }
+.log { border-top: 1px solid var(--line); }
+.log .d { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 14px; padding: 12px 6px; border-bottom: 1px solid var(--line-2); border-radius: 4px; cursor: pointer; }
+.log .d.on { background: var(--hover); }
+.log .when { font: 12px "IBM Plex Mono", monospace; color: var(--ink-3); padding-top: 2px; }
+.log .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.log .agent { font: 500 12.5px "IBM Plex Mono", monospace; }
+.log .what { font-weight: 500; }
+.log .why { color: var(--ink-2); margin: 3px 0 4px; }
+.log .meta { font: 11.5px "IBM Plex Mono", monospace; color: var(--ink-3); }
+.log-scroll { max-height: 640px; overflow: auto; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 12px; padding: 0 10px 8px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line-2); vertical-align: top; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.tables h2 { margin-top: 28px; }
+.tables h2:first-child { margin-top: 0; }
+.empty { color: var(--ink-3); padding: 14px 0; }
+
+@media (max-width: 960px) {
+  .pipe, .cols { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .top, .wrap { padding-left: 16px; padding-right: 16px; }
+  .top .where { display: none; }
+  .verdict { font-size: 24px; }
+  .hero .ending { font-size: 26px; }
+  .tablescroll { overflow-x: auto; }
+}
+</style>
+</head>
+<body>
+<div class="top">
+  <div><h1 style="display:inline">Fire rescue ops</h1><span class="where" id="where"></span></div>
+  <button id="runBruin" type="button">Run Bruin now</button>
+</div>
+
+<div class="wrap">
+  <div class="section">
+    <h2>Bruin pipeline</h2>
+    <div class="pipe">
+      <div>
+        <p class="verdict" id="verdict"><span class="pulse"></span>Checking…</p>
+        <p class="lede" id="lede"></p>
+        <div class="history" id="history" aria-label="Recent Bruin runs"></div>
+        <div class="history-axis"><span id="histOld"></span><span>latest</span></div>
+        <div class="flow" id="flow"></div>
+        <div class="numbers" id="numbers"></div>
+      </div>
+      <div>
+        <h2 id="checksTitle">Checks in the last run</h2>
+        <div class="checks" id="checks"><div class="empty" style="padding:14px">No Bruin runs recorded yet.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Runs</h2>
+    <div class="runbar" id="runbar"></div>
+    <div class="hero" id="hero"></div>
+    <div class="capture" id="capture"></div>
+
+    <div class="learn">
+      <div>
+        <h2>Your verdict on this run</h2>
+        <div class="verdict-row" id="verdictRow"></div>
+        <h2 id="lessonsTitle">Lessons the commander wrote after this run</h2>
+        <ul class="lessons" id="lessons"></ul>
+      </div>
+      <div>
+        <h2>Victims saved per run</h2>
+        <div class="legend" style="margin:0 0 8px">
+          <span><i style="background:var(--good)"></i>you approved</span>
+          <span><i style="background:var(--bad)"></i>you declined</span>
+          <span><i style="background:var(--neutral-mark)"></i>no verdict yet</span>
+        </div>
+        <div class="curve" id="curve"></div>
+      </div>
+    </div>
+
+    <h2>What each agent did, over sim time</h2>
+    <div class="legend">
+      <span><i style="background:var(--series-1)"></i>decision (decide, act, ask for approval)</span>
+      <span><i style="background:var(--series-2)"></i>spoke</span>
+      <span><i style="background:var(--neutral-mark)"></i>moved, status, approval</span>
+      <span><i style="background:none;border-left:1px dashed var(--accent);border-radius:0;width:0;height:10px;margin-right:8px"></i>twist or narrated world event</span>
+    </div>
+    <div class="lanes" id="lanes"></div>
+
+    <div class="cols">
+      <div>
+        <h2 id="logTitle">Decision log</h2>
+        <div class="log log-scroll" id="log"></div>
+      </div>
+      <div class="tables">
+        <h2>Agents</h2>
+        <div class="tablescroll" id="agents"></div>
+        <h2>Victims</h2>
+        <div class="tablescroll" id="victims"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>All runs compared</h2>
+    <div class="tablescroll" id="compare"></div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (v) => v == null ? "" : String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const get = async (p) => { const r = await fetch(p); if (!r.ok) throw new Error(`${p} ${r.status}`); return r.json(); };
+const secsAgo = (ts) => ts ? Math.max(0, (Date.now() - new Date(ts)) / 1000) : null;
+const ago = (ts) => {
+  const s = secsAgo(ts); if (s == null) return "never";
+  return s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${(s / 3600).toFixed(1)} h ago`;
+};
+const fmtMs = (ms) => ms == null ? "" : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const LLM = new Set(["decide", "act", "request_approval"]);
+const tip = $("tip");
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  tip.style.left = `${x}px`; tip.style.top = `${y}px`;
+}
+const hideTip = () => { tip.style.opacity = 0; };
+
+/* ---------------- pipeline ---------------- */
+const checkLabel = (name) => {
+  const [, col, kind] = name.split(":");
+  const k = (kind || "").replace(/_/g, " ");
+  return col === "custom-check" ? k : `${col} ${k}`;
+};
+
+function renderPipeline(p) {
+  $("where").textContent = `local · Postgres :5433 · Bruin every ${Math.round(p.every_seconds / 60)} min`;
+  const runs = p.runs || [];
+  const last = runs.find((r) => r.finished_at);
+  const tasks = p.last_run_tasks || [];
+  const assets = tasks.filter((t) => t.kind === "asset");
+  const checks = tasks.filter((t) => t.kind === "check");
+  const failed = checks.filter((t) => t.status === "failed");
+  const lag = p.staged_events == null ? null : p.raw_events - p.staged_events;
+
+  let color, title;
+  if (!last) { color = "var(--ink-3)"; title = p.running ? "Running for the first time" : "Not run yet"; }
+  else if (last.exit_code !== 0) { color = "var(--bad)"; title = "Pipeline is failing"; }
+  else if (secsAgo(last.finished_at) > p.every_seconds * 2.5) { color = "var(--warn)"; title = "Pipeline is stale"; }
+  else { color = "var(--good)"; title = "Pipeline is healthy"; }
+  $("verdict").innerHTML = `<span class="pulse" style="background:${color}"></span>${esc(title)}`;
+
+  if (last) {
+    const next = Math.max(0, p.every_seconds - secsAgo(last.started_at));
+    const how = { schedule: "on schedule", run_end: "when a run ended", manual: "by hand" }[last.trigger] || last.trigger;
+    const ok = last.exit_code === 0
+      ? `all ${plural(assets.length, "table")} built and ${plural(checks.length, "check")} passed`
+      : `${plural(failed.length, "check")} failed, ${plural(checks.filter((c) => c.status === "skipped").length, "check")} skipped`;
+    $("lede").innerHTML = `Last run ${ago(last.finished_at)}, started ${how}: ${ok} in ${fmtMs(last.duration_ms)}. `
+      + (p.running ? "Running again now." : `Next scheduled run in ${Math.ceil(next)} s.`);
+  } else {
+    $("lede").textContent = "The API runs Bruin every couple of minutes and whenever a run ends.";
+  }
+
+  const hist = runs.slice().reverse();
+  const maxD = Math.max(1, ...hist.map((r) => r.duration_ms || 0));
+  $("history").innerHTML = hist.map((r) => {
+    const cls = !r.finished_at ? "run" : r.exit_code === 0 ? "" : "bad";
+    const h = r.finished_at ? 18 + 82 * ((r.duration_ms || 0) / maxD) : 30;
+    return `<div class="bar ${cls}" style="height:${h}%" data-id="${r.id}"></div>`;
+  }).join("") || `<span class="muted" style="align-self:center">No runs yet</span>`;
+  $("histOld").textContent = hist.length ? `${hist.length} runs, oldest ${ago(hist[0].started_at)}` : "";
+  document.querySelectorAll("#history .bar").forEach((el) => {
+    const r = runs.find((x) => String(x.id) === el.dataset.id);
+    el.onmousemove = (e) => showTip(e, `<b>${!r.finished_at ? "Running" : r.exit_code === 0 ? "Passed" : "Failed"}</b> · ${esc(r.trigger.replace("_", " "))}<br>
+      <span class="tm">${new Date(r.started_at).toLocaleTimeString()} · ${fmtMs(r.duration_ms)}</span><br>
+      ${r.assets_passed} tables built · ${r.checks_passed} checks passed${r.checks_failed ? ` · ${r.checks_failed} failed` : ""}${r.checks_skipped ? ` · ${r.checks_skipped} skipped` : ""}`);
+    el.onmouseleave = hideTip;
+  });
+
+  const byAsset = (a) => {
+    const t = tasks.find((x) => x.name === a); const cs = checks.filter((c) => c.name.startsWith(a + ":"));
+    const pass = cs.filter((c) => c.status === "passed").length;
+    const bad = (t && t.status !== "passed") || cs.some((c) => c.status === "failed");
+    return `<div class="node ${bad ? "bad" : ""}"><b>${esc(a)}</b><span>${t ? (t.status === "passed" ? `built · ${pass}/${cs.length} checks` : t.status) : "not built yet"}</span></div>`;
+  };
+  const marts = ["mart.decision_log", "mart.agent_metrics", "mart.victim_outcomes", "mart.run_summary"];
+  $("flow").innerHTML = `<div class="node"><b>raw.events</b><span>${p.raw_events} events from agents</span></div>
+    <span class="arrow">→</span>${byAsset("staging.events")}<span class="arrow">→</span>
+    <div class="marts">${marts.map(byAsset).join("")}</div>`;
+
+  $("numbers").innerHTML = `
+    <div><b>${p.raw_events}</b><span>events received</span></div>
+    <div><b>${p.staged_events ?? "–"}</b><span>events Bruin has staged</span></div>
+    <div><b>${lag ?? "–"}</b><span>waiting for next run</span></div>
+    <div><b>${ago(p.last_event_at)}</b><span>last event in</span></div>`;
+
+  if (!tasks.length) return;
+  $("checksTitle").textContent = last && last.exit_code !== 0 ? "Checks in the last run (failures first)" : "Checks in the last run";
+  const order = { failed: 0, skipped: 1, passed: 2 };
+  const groups = ["staging.events", ...marts];
+  $("checks").innerHTML = groups.map((g) => {
+    const cs = checks.filter((c) => c.name.startsWith(g + ":")).sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name));
+    if (!cs.length) return "";
+    const pass = cs.filter((c) => c.status === "passed").length;
+    return `<div class="grp"><span>${esc(g)}</span><span>${pass}/${cs.length}</span></div>` + cs.map((c) => `
+      <div class="row"><span>${esc(checkLabel(c.name))}</span>
+      <span class="st ${c.status === "passed" ? "good" : c.status === "failed" ? "bad" : "idle"}">${c.status}</span>
+      <span class="ms">${c.duration_ms != null ? fmtMs(c.duration_ms) : ""}</span></div>`).join("");
+  }).join("");
+}
+
+/* ---------------- runs ---------------- */
+let selected = null, renderedKey = "";
+
+function renderRunbar(runs) {
+  if (!selected && runs.length) selected = runs[0].run_id;
+  $("runbar").innerHTML = runs.map((r) => `
+    <button type="button" class="runbtn ${r.run_id === selected ? "sel" : ""}" data-id="${r.run_id}">
+      <span class="t">Seed ${r.seed}</span>
+      <span class="m">${r.events} events · ${r.ended_at ? ago(r.started_at) : "live"}</span>
+    </button>`).join("") || `<span class="empty">No runs yet. Start one with the orchestrator.</span>`;
+  document.querySelectorAll(".runbtn").forEach((b) => b.onclick = () => { selected = b.dataset.id; renderedKey = ""; tick(); });
+}
+
+const whatOf = (e) => {
+  const p = e.payload || {};
+  if (e.type === "speak") return `“${esc(p.utterance)}”`;
+  if (e.type === "move") return "moved";
+  if (e.type === "status") return `${esc(p.victim_status)}${p.target ? ` (${esc(p.target)})` : ""}`;
+  if (e.type === "approval") return `${esc(p.action)} ${p.approval_of_seq ? `request #${esc(p.approval_of_seq)}` : "overall outcome"}`;
+  if (e.type === "world_event") { const w = p.world || {}; return esc([w.type || w.kind, w.roomId || w.room || w.twist, w.intensity].filter((v) => v != null).join(" ")); }
+  if (e.type === "request_approval") return `asks to ${esc(p.action)} ${esc(p.target || "")}${p.actor ? ` (by ${esc(p.actor)})` : ""}`;
+  return [p.action, p.target].filter(Boolean).map(esc).join(" → ");
+};
+const metaOf = (e) => e.latency_ms == null ? "" :
+  `${esc((e.model || "").replace(/^.*:/, ""))} · ${fmtMs(e.latency_ms)} · ${e.tokens_in ?? "?"} → ${e.tokens_out ?? "?"} tokens${e.confidence != null ? ` · confidence ${Number(e.confidence).toFixed(2)}` : ""}`;
+
+const LANE_ORDER = ["commander", "scout", "suppression", "rescue", "director", "human", "victim"];
+function renderLanes(events) {
+  const el = $("lanes");
+  if (!events.length) { el.innerHTML = `<div class="empty" style="padding:14px">No events in this run yet.</div>`; return; }
+  const agents = [...new Map(events.map((e) => [e.agent_id, e.agent_role])).entries()]
+    .sort((a, b) => LANE_ORDER.indexOf(a[1]) - LANE_ORDER.indexOf(b[1]) || a[0].localeCompare(b[0]));
+  const W = Math.max(720, el.clientWidth || 900), left = 136, right = 18, top = 26, laneH = 24;
+  const H = top + agents.length * laneH + 10;
+  const tMax = Math.max(1, ...events.map((e) => e.t_sim));
+  const x = (t) => left + (W - left - right) * (t / tMax);
+  const y = (id) => top + agents.findIndex((a) => a[0] === id) * laneH + laneH / 2;
+  const step = tMax > 240 ? 60 : tMax > 90 ? 20 : 10;
+  let svg = `<svg width="${W}" height="${H}" role="img" aria-label="Timeline of agent events">`;
+  svg += `<g class="axis">`;
+  for (let t = 0; t <= tMax; t += step) svg += `<line class="grid" x1="${x(t)}" x2="${x(t)}" y1="${top - 6}" y2="${H - 6}"/><text x="${x(t)}" y="14" text-anchor="middle">${t}s</text>`;
+  svg += `</g>`;
+  agents.forEach(([id], i) => {
+    const yy = top + i * laneH;
+    if (i) svg += `<line class="lane-sep" x1="0" x2="${W}" y1="${yy}" y2="${yy}"/>`;
+    svg += `<text x="12" y="${yy + laneH / 2 + 4}">${esc(id)}</text>`;
+  });
+  const notable = (e) => e.type === "world_event" && (e.reasoning || (e.payload && e.payload.twist));
+  events.filter(notable).forEach((e) => {
+    svg += `<line class="world" x1="${x(e.t_sim)}" x2="${x(e.t_sim)}" y1="${top}" y2="${H - 8}"/>`;
+    svg += `<rect class="worldhit" data-seq="${e.seq}" x="${x(e.t_sim) - 5}" y="${top}" width="10" height="${H - top - 8}" fill="transparent"/>`;
+  });
+  const rank = (e) => LLM.has(e.type) ? 2 : e.type === "speak" ? 1 : 0;
+  events.filter((e) => e.type !== "world_event").sort((a, b) => rank(a) - rank(b)).forEach((e) => {
+    const kind = LLM.has(e.type) ? "series-1" : e.type === "speak" ? "series-2" : "neutral-mark";
+    const r = kind === "neutral-mark" ? 3.5 : 5.5;
+    svg += `<circle class="mk" data-seq="${e.seq}" cx="${x(e.t_sim)}" cy="${y(e.agent_id)}" r="${r}" fill="var(--${kind})" stroke="var(--surface)" stroke-width="1.5"/>`;
+  });
+  el.innerHTML = svg + `</svg>`;
+  const bySeq = new Map(events.map((e) => [String(e.seq), e]));
+  el.querySelectorAll(".mk, .worldhit").forEach((m) => {
+    const e = bySeq.get(m.dataset.seq);
+    const head = e.type === "world_event" ? `<b>World event</b> · ${esc(e.agent_id)}` : `<b>${esc(e.agent_id)}</b> · ${esc(e.type.replace("_", " "))}`;
+    m.onmousemove = (ev) => showTip(ev, `${head}<br>${whatOf(e)}
+      ${e.reasoning ? `<br><span style="opacity:.85">${esc(e.reasoning)}</span>` : ""}
+      <br><span class="tm">#${e.seq} · ${Number(e.t_sim).toFixed(1)} s${e.latency_ms != null ? " · " + metaOf(e) : ""}</span>`);
+    m.onmouseleave = hideTip;
+    if (m.classList.contains("mk")) m.onclick = () => focusSeq(e.seq);
+  });
+}
+
+function focusSeq(seq) {
+  document.querySelectorAll(".log .d.on, .lanes .mk.on").forEach((n) => n.classList.remove("on"));
+  const row = document.querySelector(`.log .d[data-seq="${seq}"]`);
+  const mk = document.querySelector(`.lanes .mk[data-seq="${seq}"]`);
+  if (mk) mk.classList.add("on");
+  if (row) { row.classList.add("on"); row.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+}
+
+function renderLog(events, logRows) {
+  const human = new Map(logRows.map((r) => [r.seq, r]));
+  const decisions = events.filter((e) => LLM.has(e.type) || e.type === "speak");
+  const nSpoke = decisions.filter((e) => e.type === "speak").length;
+  $("logTitle").textContent = `Decision log · ${plural(decisions.length - nSpoke, "decision")} and ${plural(nSpoke, "spoken line")}`;
+  $("log").innerHTML = decisions.length ? decisions.map((e) => {
+    const h = human.get(e.seq);
+    const verdict = h && h.approval_decision ? `<span class="st ${h.approval_decision === "approve" ? "good" : h.approval_decision === "pending" ? "idle" : "bad"}">human: ${esc(h.approval_decision.replace("_", " "))}${h.approval_wait_s != null ? ` in ${h.approval_wait_s}s` : ""}</span>` : "";
+    return `<div class="d" data-seq="${e.seq}">
+      <div class="when">${Number(e.t_sim).toFixed(1)}s<br><span>#${e.seq}</span></div>
+      <div><div class="head"><span class="agent">${esc(e.agent_id)}</span><span class="what">${whatOf(e)}</span>${verdict}</div>
+      ${e.reasoning ? `<div class="why">${esc(e.reasoning)}</div>` : ""}
+      <div class="meta">${metaOf(e) || "scripted, no LLM call"}</div></div></div>`;
+  }).join("") : `<div class="empty">No decisions yet.</div>`;
+  $("log").querySelectorAll(".d").forEach((d) => d.onclick = () => focusSeq(d.dataset.seq));
+}
+
+function table(cols, rows, empty) {
+  if (!rows.length) return `<div class="empty">${empty}</div>`;
+  return `<table><thead><tr>${cols.map((c) => `<th class="${c[2] || ""}">${c[0]}</th>`).join("")}</tr></thead><tbody>${
+    rows.map((r) => `<tr>${cols.map((c) => `<td class="${c[2] || ""}">${c[1](r)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+const statusLabel = (s) => `<span class="st ${s === "rescued" ? "good" : s === "lost" ? "bad" : "warn"}">${esc(s)}</span>`;
+
+async function renderRun(runs) {
+  if (!selected) { $("hero").innerHTML = ""; $("capture").style.display = "none"; return; }
+  const meta = runs.find((r) => r.run_id === selected) || {};
+  const [events, logRows, m, cap, cmp, lr, curve] = await Promise.all([
+    get(`/runs/${selected}/timeline?limit=5000`), get(`/runs/${selected}/decision-log`),
+    get(`/runs/${selected}/metrics`), get(`/runs/${selected}/capture`), get("/runs/compare"),
+    get(`/runs/${selected}/lessons`), get("/learning/curve"),
+  ]);
+  renderLearning(lr);
+  renderCurve(curve);
+  const causeOf = new Map(events.filter((e) => e.type === "status" && e.payload.victim_status === "lost").map((e) => [e.agent_id, e.payload.cause]));
+  const s = cmp.find((r) => r.run_id === selected);
+  const lat = events.filter((e) => e.latency_ms != null).map((e) => e.latency_ms).sort((a, b) => a - b);
+  const p95 = lat.length ? lat[Math.min(lat.length - 1, Math.floor(lat.length * 0.95))] : null;
+  const tokens = events.reduce((a, e) => a + (e.tokens_in || 0) + (e.tokens_out || 0), 0);
+  $("hero").innerHTML = `
+    <div><div class="ending">${s ? esc(s.ending[0].toUpperCase() + s.ending.slice(1)) : meta.ended_at ? "Waiting for Bruin" : "In progress"}</div>
+      <div class="k">Seed ${meta.seed ?? ""} · ${esc(meta.scenario_id || "")}${s && s.twists ? ` · twists: ${esc(s.twists)}` : ""}</div></div>
+    <div><div class="v">${s ? `${s.rescued} / ${s.victims}` : "–"}</div><div class="k">victims saved</div></div>
+    <div><div class="v">${cap.decisions}</div><div class="k">decisions</div></div>
+    <div><div class="v">${cap.llm_calls}</div><div class="k">LLM calls</div></div>
+    <div><div class="v">${p95 != null ? fmtMs(p95) : "–"}</div><div class="k">p95 LLM latency</div></div>
+    <div><div class="v">${tokens.toLocaleString()}</div><div class="k">tokens</div></div>`;
+
+  const c = cap, logged = c.in_decision_log;
+  let st, msg;
+  if (logged == null || (logged === 0 && c.decisions > 0)) { st = "warn"; msg = `${plural(c.decisions, "decision")} received. Bruin hasn't built this run into the decision log yet.`; }
+  else if (logged === c.decisions) { st = "good"; msg = `All ${plural(c.decisions, "decision")} captured: ${c.decisions} in raw events, ${logged} in Bruin's decision log, ${c.with_reasoning} with reasoning, ${c.llm_calls} LLM calls with model, latency and token counts${c.approval_requests ? `, ${c.approvals} of ${plural(c.approval_requests, "approval request")} answered` : ""}${c.outcome_verdict ? `, human verdict on the outcome: ${c.outcome_verdict}` : ""}.`; }
+  else { st = "bad"; msg = `Mismatch: ${c.decisions} decisions in raw events but ${logged} in the decision log. Bruin may be behind or a check failed.`; }
+  $("capture").style.display = "";
+  $("capture").innerHTML = `<span class="st ${st}">${st === "good" ? "captured" : st === "warn" ? "pending" : "check"}</span><span>${esc(msg)}</span>`;
+
+  const key = `${selected}:${events.length}:${logRows.length}`;
+  if (key !== renderedKey) { renderLanes(events); renderLog(events, logRows); renderedKey = key; }
+
+  $("agents").innerHTML = table([
+    ["agent", (a) => `<span class="mono">${esc(a.agent_id)}</span>`],
+    ["decisions", (a) => a.decisions, "n"], ["LLM calls", (a) => a.llm_calls, "n"],
+    ["p95", (a) => a.p95_latency_ms != null ? fmtMs(a.p95_latency_ms) : "", "n"],
+    ["tokens", (a) => (a.tokens_in + a.tokens_out).toLocaleString(), "n"],
+    ["asked", (a) => a.approvals_requested, "n"],
+  ], m.agents, "Bruin hasn't built this run yet.");
+  $("victims").innerHTML = table([
+    ["victim", (v) => `<span class="mono">${esc(v.victim_id.replace("victim-", ""))}</span>`],
+    ["outcome", (v) => statusLabel(v.final_status) + (v.final_status === "lost" && causeOf.get(v.victim_id) ? ` <span class="muted">${esc(causeOf.get(v.victim_id))}</span>` : "")],
+    ["found", (v) => v.found_at_s != null ? `${v.found_at_s}s` : "", "n"],
+    ["out", (v) => v.rescued_at_s != null ? `${v.rescued_at_s}s` : "", "n"],
+  ], m.victims, "Bruin hasn't built this run yet.");
+  $("compare").innerHTML = table([
+    ["seed", (r) => r.seed, "n"], ["ending", (r) => esc(r.ending)],
+    ["saved", (r) => `${r.rescued} / ${r.victims}`, "n"], ["lost", (r) => r.lost, "n"],
+    ["twists", (r) => esc(r.twists || "none")], ["asked human", (r) => r.approvals_requested ?? 0, "n"],
+    ["approved", (r) => r.approved ?? 0, "n"], ["LLM calls", (r) => r.llm_calls ?? 0, "n"],
+    ["tokens", (r) => (r.tokens ?? 0).toLocaleString(), "n"], ["sim time", (r) => r.sim_seconds != null ? `${r.sim_seconds}s` : "", "n"],
+    ["started", (r) => ago(r.started_at)],
+  ], cmp, "Bruin hasn't built any runs yet.");
+}
+
+/* ---------------- learning ---------------- */
+async function setVerdict(v) {
+  document.querySelectorAll("#verdictRow button").forEach((b) => b.disabled = true);
+  await fetch(`/runs/${selected}/verdict`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ verdict: v }) });
+  renderedKey = ""; tick();
+}
+
+function renderLearning(lr) {
+  const v = lr.verdict && lr.verdict.verdict;
+  $("verdictRow").innerHTML = (v
+    ? `<span class="st ${v === "approve" ? "good" : "bad"}">you ${v}d this outcome</span><span class="muted">Change it:</span>`
+    : `<span class="q">Is this an acceptable outcome?</span>`)
+    + `<button type="button" class="approve" onclick="setVerdict('approve')">Approve outcome</button>`
+    + `<button type="button" class="decline" onclick="setVerdict('decline')">Decline outcome</button>`;
+  $("lessonsTitle").textContent = lr.lessons.length ? `Lessons the commander wrote after this run (${lr.lessons.length})` : "Lessons the commander wrote after this run";
+  $("lessons").innerHTML = lr.lessons.length ? lr.lessons.map((l) => `<li><span class="role">${esc(l.role)}</span>${esc(l.lesson)}
+      ${l.evidence ? `<div class="ev">${esc(l.evidence)}</div>` : ""}</li>`).join("")
+    : `<li class="muted">No lessons for this run (rule policy runs don't write any).</li>`;
+}
+
+function renderCurve(rows) {
+  const el = $("curve");
+  const pts = rows.filter((r) => r.victims > 0);
+  if (pts.length < 2) { el.innerHTML = `<div class="empty" style="padding:14px">Needs at least two runs.</div>`; return; }
+  const W = Math.max(320, el.clientWidth || 520), H = 190, l = 30, r = 12, t = 14, b = 26;
+  const maxV = Math.max(...pts.map((p) => p.victims));
+  const x = (i) => l + (W - l - r) * (pts.length === 1 ? 0.5 : i / (pts.length - 1));
+  const y = (v) => t + (H - t - b) * (1 - v / maxV);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Victims saved per run">`;
+  for (let v = 0; v <= maxV; v += 2) svg += `<line class="gl" x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}"/><text x="${l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  svg += `<text x="${l}" y="${H - 6}">run 1</text><text x="${W - r}" y="${H - 6}" text-anchor="end">run ${pts.length}</text>`;
+  svg += `<polyline class="ln" points="${pts.map((p, i) => `${x(i)},${y(p.saved)}`).join(" ")}"/>`;
+  pts.forEach((p, i) => {
+    const c = p.verdict === "approve" ? "var(--good)" : p.verdict === "decline" ? "var(--bad)" : "var(--neutral-mark)";
+    const sel = p.run_id === selected;
+    svg += `<circle class="cp" data-i="${i}" cx="${x(i)}" cy="${y(p.saved)}" r="${sel ? 7 : 5}" fill="${c}" stroke="${sel ? "var(--ink)" : "var(--surface)"}" stroke-width="2" style="cursor:pointer"/>`;
+  });
+  el.innerHTML = svg + "</svg>";
+  el.querySelectorAll(".cp").forEach((c) => {
+    const p = pts[+c.dataset.i];
+    c.onmousemove = (e) => showTip(e, `<b>Run ${p.n} · seed ${p.seed}</b><br>${p.saved} of ${p.victims} saved · ${p.lessons} lessons written<br>${p.verdict ? `you ${p.verdict}d it` : "no verdict yet"}`);
+    c.onmouseleave = hideTip;
+    c.onclick = () => { selected = p.run_id; renderedKey = ""; tick(); };
+  });
+}
+
+async function tick() {
+  try { renderPipeline(await get("/pipeline/status")); }
+  catch (e) { $("verdict").innerHTML = `<span class="pulse" style="background:var(--bad)"></span>API unreachable`; $("lede").textContent = e.message; }
+  try { const runs = await get("/runs"); renderRunbar(runs); await renderRun(runs); } catch (e) { console.error(e); }
+}
+
+$("runBruin").onclick = async () => {
+  const b = $("runBruin"); b.disabled = true; b.textContent = "Starting…";
+  try { const r = await (await fetch("/pipeline/run", { method: "POST" })).json(); b.textContent = r.started ? "Running…" : r.reason; }
+  catch { b.textContent = "Could not start"; }
+  setTimeout(() => { b.disabled = false; b.textContent = "Run Bruin now"; tick(); }, 3000);
+};
+addEventListener("resize", () => { renderedKey = ""; });
+
+tick();
+setInterval(tick, 3000);
+</script>
+</body>
+</html>

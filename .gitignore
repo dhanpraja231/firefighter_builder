@@ -11,3 +11,6 @@ cdk.out/
 logs/runs
 logs/*.log
 *.py[cod]
+
+recordings/
+agents/band/agent_config.yaml

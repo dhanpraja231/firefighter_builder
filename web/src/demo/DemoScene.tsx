@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { Engine9Scene } from "../scene/Engine9Scene";
 import { Character } from "../scene/characters/Character";
-import { activeMomentAtTime, agentFramesAtTime, worldStateAtTime } from "../timeline/replay";
+import { agentFramesAtTime, worldStateAtTime } from "../timeline/replay";
 import { visualFor } from "../timeline/roster";
 import { startingPosition } from "../timeline/startingPositions";
 import type { TimelineEvent } from "../timeline/schema";
@@ -15,7 +15,7 @@ function easeOutCubic(x: number): number {
 }
 
 /** Renders one instant of a run: the engine's entrance, the building's WorldState, and every agent's frame. */
-export function DemoScene({ events, t }: { events: TimelineEvent[]; t: number }) {
+export function DemoScene({ events, t, shot = 0 }: { events: TimelineEvent[]; t: number; shot?: number }) {
   const entryProgress = Math.min(1, t / ENGINE_ENTRY_SECONDS);
   const engineZOffset = (1 - easeOutCubic(entryProgress)) * ENGINE_ENTRY_START_OFFSET;
   const storyT = Math.max(0, t - ENGINE_ENTRY_SECONDS);
@@ -28,28 +28,13 @@ export function DemoScene({ events, t }: { events: TimelineEvent[]; t: number })
     return map;
   }, [events]);
 
-  // Cut the camera to whoever's currently speaking/deciding -- re-fires only when the active agent changes.
-  const activeMoment = useMemo(() => activeMomentAtTime(events, storyT), [events, storyT]);
-  // Hold the wide establishing shot through the engine's entrance before cutting to anyone.
-  const cutsAllowed = t > ENGINE_ENTRY_SECONDS + 1.5;
-  const [closeupCue, setCloseupCue] = useState(0);
-  const lastSpeaker = useRef<string | null>(null);
-  useEffect(() => {
-    if (!cutsAllowed) return;
-    const id = activeMoment?.agentId ?? null;
-    if (id && id !== lastSpeaker.current) {
-      lastSpeaker.current = id;
-      setCloseupCue((n) => n + 1);
-    }
-  }, [activeMoment, cutsAllowed]);
-  const closeupTarget = cutsAllowed && activeMoment ? frames[activeMoment.agentId]?.position : undefined;
+  // The camera holds one of three static shots (STATIC_SHOTS), switched from the story panel.
 
   return (
     <Engine9Scene
       worldState={worldState}
       engineZOffset={engineZOffset}
-      closeupCue={closeupTarget ? closeupCue : undefined}
-      closeupTarget={closeupTarget}
+      shot={shot}
     >
       {Object.entries(frames).map(([agentId, frame]) => {
         if (agentId === "director" || agentId === "human") return null;

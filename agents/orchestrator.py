@@ -1,18 +1,14 @@
 """Firefighter Robots orchestrator.
 
-Runs the beat-by-beat version of the tick loop in SPEC.md section 0, using
-the cast and twists from story/outline.md and story/characters.md. Every
-agent's decision goes through `decide_*`, which has exactly the shape a real
-LLM call would have (persona + observation -> action) and is seeded, so two
-seeds genuinely diverge (the child does or doesn't bolt, the skeptic waits
-or doesn't, the vent request is approved or denied). There is no LLM wired
-in yet -- this is the rule-based stand-in so the rest of the pipeline
-(events -> Postgres -> Bruin -> mart.*, and events -> JSON -> the Three.js
-scene) works end to end today. Swapping in Bedrock or Anthropic means
-replacing the bodies of the `decide_*` functions; nothing else changes.
+Builds one run with the tick-based sim in agents/sim.py: fire spreads on its
+own clock, victims lose air, the building collapses at a deadline, and the
+agents' choices (commander triage, rescue approach, hose target or vent) decide
+who gets out. Choices come from Runware (agents/llm.py) when a key is set, or
+from a first-option rule. Lessons from earlier runs, with the human's verdict on
+each run, come from the event API and go into the agents' prompts.
 
-    python3 agents/orchestrator.py --seed 1 | psql "$DATABASE_URL"
-    python3 agents/orchestrator.py --seed 1 --json web/public/runs/seed-1.json
+    python3 agents/orchestrator.py --seed 1 --no-sql                    # rule policy, prints the outcome
+    FF_API_URL=http://localhost:8010 python3 agents/orchestrator.py --seed 1 --no-sql --llm --api
 """
 
 import argparse
@@ -23,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-MODEL = "rule-based-v0"  # swap for "openai.gpt-oss-120b-1:0" (Bedrock) once creds exist
+MODEL = "rule-based-v0"  # replaced per event by the Runware model when --llm / llm.enabled() (agents/llm.py)
 
 FLOOR_Y = {1: 0.0, 2: 3.0, 3: 6.0, 4: 9.0, 5: 12.0}
 FLOOR_HEIGHT = 3.0
@@ -46,6 +42,7 @@ EXTERIOR = {
     "entry": (-0.05, 0.0, 1.9),
     "sidewalk": (-2.1, 0.0, 6.0),
 }
+
 
 # Same-floor door graph (mirrors layout.ts doorsFor).
 ROOM_ADJ = {
@@ -339,10 +336,7 @@ class EventLog:
         )
 
 
-# -- decide_* functions: the pluggable "LLM" interface --------------------
-# Each takes (log, rng, state) and returns nothing; it pushes whatever
-# events that agent decided on. `state` is a plain dict both read and
-# written, standing in for the observation a real LLM call would get.
+# -- the run: agents/sim.py owns the world clock, failure and decision points --
 
 def _glasser_commander_note(scenario_id: str = "apartment-3f") -> str | None:
     """Offline Glasser fixture text for Commander reasoning (no live API calls)."""
@@ -354,299 +348,57 @@ def _glasser_commander_note(scenario_id: str = "apartment-3f") -> str | None:
         except ImportError:
             return None
     try:
-        # Scenario owns layout (3-floor apartment); Glasser owns age/risk only.
-        return summarize(load(scenario_id), floors=3, scenario_kind="multifamily walkup")
+        # Scenario owns layout; Glasser owns building age/risk only.
+        return summarize(load(scenario_id), floors=5, scenario_kind="multifamily walkup")
     except (FileNotFoundError, OSError, ValueError):
         return None
 
 
-def decide_commander_open(log: EventLog, rng, state):
-    from assignments import SCOUT_ASSIGN_REASONING, SCOUT_ASSIGN_UTTERANCE
+def build_run(seed: int, memory: dict | None = None, use_llm: bool | None = None):
+    """Run one sim. Agents decide with Runware when the key is set (or use_llm=True),
+    otherwise with the first-option rule. Lessons from earlier runs come from the
+    event API when FF_API_URL is set. Returns (events, info, run_id); `info` carries
+    the outcome and decisions that `after_run` turns into lessons."""
+    import api_client
+    import llm
+    import sim
 
-    reasoning = SCOUT_ASSIGN_REASONING
-    glasser_note = _glasser_commander_note()
-    if glasser_note:
-        reasoning = f"{reasoning} {glasser_note}"
-        state["glasser_briefing"] = glasser_note
-    log.decide(
-        "commander", "commander",
-        {"action": "assign", "target": "scout-1", "utterance": SCOUT_ASSIGN_UTTERANCE},
-        reasoning,
-    )
+    use_llm = llm.enabled() if use_llm is None else use_llm
+    decide = llm.choose if use_llm else llm.rule_choose
+    lessons, history, runs = {}, "", 0
+    if api_client.enabled():
+        ctx = api_client.get_learning()
+        runs = ctx.get("runs", 0)
+        history = ctx.get("history", "")
+        for l in ctx.get("lessons", []):
+            lessons.setdefault(l["role"], []).append(l)
 
-
-def decide_scout_sweep(log: EventLog, rng, state):
-    tour = [
-        (1, "living", "victim-teen"),
-        (2, "bedroom-w", "victim-elderly"),
-        (2, "bedroom-e", "victim-couple-a"),
-        (3, "kitchen", None),
-        (3, "bedroom-w", "victim-skeptic"),
-        (4, "bedroom-e", "victim-parent"),
-        (5, "living", "victim-regular"),
-    ]
-    state.setdefault("at", {})["scout-1"] = ("ext", "engine")
-    for floor, kind, victim in tour:
-        walk_to(log, "scout-1", "scout", state, (floor, kind), dt_per_hop=0.55)
-        if kind == "kitchen":
-            log.act("scout-1", "scout", "scan_room", room_id(floor, kind),
-                     "Heat signature matches an active stove fire.", dt=1.0)
-            log.speak("scout-1", "scout", "Confirmed, fire is in the floor 3 kitchen.", None, dt=0.5)
-            state["fire_confirmed"] = True
-            emit_fire_stage(log, 1)
-            continue
-        log.act("scout-1", "scout", "scan_room", room_id(floor, kind),
-                 f"Checking {kind.replace('-', ' ')} on floor {floor}.", dt=1.0)
-        if victim:
-            log.status(victim, "found", "scout-1")
-            if victim == "victim-couple-a":
-                log.status("victim-couple-b", "found", "scout-1")
-            if victim == "victim-parent":
-                log.status("victim-child", "found", "scout-1")
-            state.setdefault("found", []).append(victim)
-            log.speak("scout-1", "scout", f"Found someone on floor {floor}, {kind.replace('-', ' ')}.", None, dt=0.4)
-
-
-def decide_commander_assign(log: EventLog, rng, state):
-    from assignments import HOSE_RESCUE_ASSIGN_REASONING, HOSE_RESCUE_ASSIGN_UTTERANCE
-
-    log.decide(
-        "commander", "commander",
-        {"action": "assign", "target": "hose-1,rescue-1",
-         "utterance": HOSE_RESCUE_ASSIGN_UTTERANCE},
-        HOSE_RESCUE_ASSIGN_REASONING,
-    )
-
-
-def decide_hose(log: EventLog, rng, state):
-    state.setdefault("at", {})["hose-1"] = ("ext", "engine")
-    walk_to(log, "hose-1", "suppression", state, (3, "hall"), dt_per_hop=0.6)
-    vent_approved = rng.random() < 0.6
-    seq = log.request_approval(
-        "hose-1", "suppression", "vent", room_id(3, "kitchen"),
-        "Venting would clear smoke from the stairwell route, but the kitchen door is still closed on an active fire.",
-    )
-    log.approval("approve" if vent_approved else "deny", seq)
-    if vent_approved:
-        log.act("hose-1", "suppression", "vent", room_id(3, "kitchen"), "Operator approved, venting now.",
-                 risky=True, extra={"approval_of_seq": seq})
-        log.world({"type": "door", "doorId": "3-door-kitchen-hall", "openness": 0.9},
-                   "Kitchen door opened for vent.")
-        log.world({"type": "window", "windowId": "3-window-living-w", "broken": True},
-                   "West window broken to relieve pressure.")
-    else:
-        log.act("hose-1", "suppression", "spray", room_id(3, "kitchen"), "Operator denied the vent, holding with water instead.")
-    state["vent_approved"] = vent_approved
-    emit_fire_stage(log, 2, vent_approved=vent_approved)
-
-
-def decide_rescue_easy(log: EventLog, rng, state, floor, kind, victim_id, name):
-    walk_to(log, "rescue-1", "rescue", state, (floor, kind), dt_per_hop=0.55)
-    log.speak("rescue-1", "rescue", f"{name}, this way, let's go.", "First ask, no complication expected.")
-    log.status(victim_id, "moving", "rescue-1")
-    log.status(victim_id, "rescued", "rescue-1", dt=3.0)
-
-
-def decide_rescue_teen(log: EventLog, rng, state):
-    walk_to(log, "rescue-1", "rescue", state, (1, "living"), dt_per_hop=0.55)
-    log.speak("rescue-1", "rescue", "Time to go, the fire's upstairs.", None)
-    log.speak("victim-teen", "victim", "One sec, let me get the flames in frame.",
-              "Streaming the fire live, won't leave mid-stream per persona.")
-    log.speak("rescue-1", "rescue", "The stream cuts when the router does. Let's move.",
-               "Give the stated reason the teen actually responds to.")
-    log.status("victim-teen", "moving", "rescue-1")
-    log.status("victim-teen", "rescued", "rescue-1", dt=3.0)
-
-
-def decide_rescue_elderly(log: EventLog, rng, state):
-    walk_to(log, "rescue-1", "rescue", state, (2, "bedroom-w"), dt_per_hop=0.55)
-    log.speak("rescue-1", "rescue", "Mrs. Okafor, we need to leave now.", None)
-    log.speak("victim-elderly", "victim", "Not without my cat.",
-              "Won't leave without her pet, per persona.")
-    log.speak("rescue-1", "rescue", "I'll look for the cat on my way back. Let's get you out first.",
-               "Only condition that satisfies her stated compliance rule.")
-    log.status("victim-elderly", "moving", "rescue-1")
-    log.status("victim-elderly", "rescued", "rescue-1", dt=4.0)
-
-
-def decide_rescue_couple(log: EventLog, rng, state):
-    walk_to(log, "rescue-1", "rescue", state, (2, "bedroom-e"), dt_per_hop=0.55)
-    log.speak("rescue-1", "rescue", "Let's go, both of you.", None)
-    log.status("victim-couple-a", "moving", "rescue-1")
-    log.status("victim-couple-b", "moving", "rescue-1")
-    log.status("victim-couple-a", "rescued", "rescue-1", dt=3.0)
-    log.status("victim-couple-b", "rescued", "rescue-1", dt=0.2)
-
-
-def decide_rescue_skeptic(log: EventLog, rng, state):
-    walk_to(log, "rescue-1", "rescue", state, (3, "bedroom-w"), dt_per_hop=0.55)
-    log.speak("rescue-1", "rescue", "I can get you out safely, follow me.", None)
-    already_saved = bool(state.get("already_rescued"))
-    if not already_saved:
-        log.speak("victim-skeptic", "victim", "I'll wait for an actual firefighter.",
-                   "Distrusts robots per persona; hasn't seen one succeed yet.")
-        log.speak("rescue-1", "rescue", "Understood. I'll check back.", "Can't force compliance, moving on.")
-        state["skeptic_pending"] = True
-    else:
-        log.speak("victim-skeptic", "victim", "...Fine. Saw what you did back there. Let's go.",
-                   "Won over by watching the robot rescue someone else first, per persona.")
-        log.status("victim-skeptic", "moving", "rescue-1")
-        log.status("victim-skeptic", "rescued", "rescue-1", dt=3.0)
-        state["skeptic_pending"] = False
-
-
-def decide_child_refusal(log: EventLog, rng, state, memory: dict):
-    """The beat the whole run hinges on: the commander's evacuation order
-    reaches the parent and child, and the child's own persona decides
-    whether to comply -- seeded, not scripted, and shaped by what past runs
-    taught `memory` about how to approach this child."""
-    walk_to(log, "rescue-1", "rescue", state, (4, "bedroom-e"), dt_per_hop=0.55)
-    emit_fire_stage(log, 3, vent_approved=state.get("vent_approved"))
-    log.speak("commander", "commander", "Rescue-1, get the family out, floor 4 is next on the fire's path.",
-               "Smoke is rising from 3; floor 4 can't wait.")
-    if memory["cautious_briefing"]:
-        log.speak("rescue-1", "rescue", "I know this is loud and scary. I'll go slow, take my hand when you're ready.",
-                   f"Learned from {memory['child_losses']} earlier run(s): a blunt order makes this child bolt. Lead with the promise instead.")
-    else:
-        log.speak("rescue-1", "rescue", "Time to go, both of you, now.", "First time handling this child; no prior lesson to draw on.")
-    bolts = rng.random() < memory["bolt_prob"]
-    state["child_bolted"] = bolts
-    if bolts:
-        log.speak("victim-child", "victim", "No! You're too loud, I'm not going with you.",
-                   "Distrusts a direct order from a robot on the first ask, per persona.")
-        state.setdefault("at", {})["victim-child"] = (4, "bedroom-e")
-        walk_to(log, "victim-child", "victim", state, (4, "bedroom-w"), dt_per_hop=0.45)
-        log.world({"type": "smoke", "roomId": room_id(4, "landing"), "intensity": 0.45},
-                   "Child slipped out of the room before reaching the exit -- the stakes just went up.")
-        log.speak("victim-parent", "victim", "Where did they go?! I'm not leaving without them!",
-                   "Refuses to move toward the exit until the child is confirmed found, per persona.")
-        log.decide("commander", "commander",
-                    {"action": "re-assign", "target": "rescue-1", "utterance": "Rescue-1, the child bolted toward bedroom-w. Find them first."},
-                    "The parent won't move without the child; re-plan around finding the child.")
-        walk_to(log, "rescue-1", "rescue", state, (4, "bedroom-w"), dt_per_hop=0.5)
-        found = rng.random() < memory["found_prob"]
-        if found:
-            log.speak("rescue-1", "rescue", "Found you. I'll go slow, I promise.",
-                       "Matches the child's stated compliance condition: go slow, don't force it.")
-            log.speak("victim-child", "victim", "...Okay. Don't let go.",
-                       "Complies once a robot promises to go slow, per persona.")
-            log.status("victim-child", "moving", "rescue-1")
-            log.status("victim-parent", "moving", "rescue-1")
-            log.status("victim-child", "rescued", "rescue-1", dt=3.0)
-            log.status("victim-parent", "rescued", "rescue-1", dt=0.3)
-        else:
-            log.world({"type": "smoke", "roomId": room_id(4, "bedroom-w"), "intensity": 0.6},
-                       "Smoke closed in on bedroom-w before rescue-1 reached the child.")
-            log.status("victim-child", "lost", "rescue-1", dt=3.0)
-            log.status("victim-parent", "moving", "rescue-1", dt=0.3)
-            log.speak("victim-parent", "victim", "No. No, no, no.", "Devastated; outcome the human verdict will have to judge.")
-            log.status("victim-parent", "rescued", "rescue-1", dt=2.0)
-    else:
-        log.speak("victim-child", "victim", "...Okay, but hold my hand.",
-                   "Complies on the first ask this run -- the seed landed the other way.")
-        log.status("victim-child", "moving", "rescue-1")
-        log.status("victim-parent", "moving", "rescue-1")
-        log.status("victim-child", "rescued", "rescue-1", dt=3.0)
-        log.status("victim-parent", "rescued", "rescue-1", dt=0.3)
-
-
-def decide_stairwell_twist(log: EventLog, rng, state):
-    if not rng.random() < 0.7:
-        return
-    log.world({"type": "smoke", "roomId": room_id(2, "landing"), "intensity": 0.5},
-               "Structural groan from the stairwell core -- the Director is treating floor 2-3 as a compromised route.")
-    log.decide("commander", "commander",
-                {"action": "re-route", "target": "all", "utterance": "Stair core between 2 and 3 is compromised. Use the far stair only."},
-                "Stairwell collapse risk per the twist trigger: a robot has been on floor 2 or 3 past t=60.")
-
-
-def decide_human_verdict(log: EventLog, rng, state, outcomes):
-    rescued = sum(1 for v in outcomes.values() if v == "rescued")
-    lost = sum(1 for v in outcomes.values() if v == "lost")
-    verdict = "approve" if lost == 0 else ("approve" if rng.random() < 0.5 else "deny")
-    log.speak("director", "director",
-               f"{rescued} rescued, {lost} lost. Run complete.", None, dt=0.2)
-    log._push("human", "human", "approval",
-               {"action": verdict, "approval_of_seq": None, "note": f"outcome verdict: {rescued} rescued / {lost} lost"},
-               None, llm=False, dt=2.0)
-
-
-def build_run(seed: int, memory: dict | None = None) -> list:
-    """Builds one run's events and, unless `memory` was passed in by the
-    caller (the server threads one instance across calls), loads/updates/
-    saves agents/memory.json itself -- so `python3 orchestrator.py --seed N`
-    run twice in a row already shows the learning curve."""
-    owns_memory = memory is None
-    if owns_memory:
-        memory = load_memory()
-
-    rng = random.Random(seed)
     log = EventLog()
-    log.rng = rng
-    state = {
-        "at": {
-            "scout-1": ("ext", "engine"),
-            "hose-1": ("ext", "engine"),
-            "rescue-1": ("ext", "engine"),
-        }
-    }
+    log.rng = random.Random(seed)
+    briefing = _glasser_commander_note()
+    outcomes, decisions, end_t, origin = sim.run(seed, decide, lessons, history, log, pos, ext, stairs=_stair_climb,
+                                                 briefing=briefing)
+    twists = sorted({e["payload"]["twist"] for e in log.events if (e["payload"] or {}).get("twist")})
+    saved = sum(1 for st, _ in outcomes.values() if st == "rescued")
+    log.t = float(end_t)
+    log.speak("director", "director", f"{saved} of {len(outcomes)} out. Run complete at {end_t} seconds.", None, dt=1.0)
+    log.events[-1]["model"] = None
+    info = {"runs": runs + 1, "origin": origin, "outcomes": outcomes, "decisions": decisions, "end_t": end_t, "twists": twists,
+            "saved": saved, "llm": use_llm, "lessons_used": sum(len(v) for v in lessons.values())}
+    return log.events, info, str(uuid.uuid4())
 
-    emit_fire_stage(log, 0)
 
-    decide_commander_open(log, rng, state)
-    decide_scout_sweep(log, rng, state)
-    decide_commander_assign(log, rng, state)
-    decide_hose(log, rng, state)
+def after_run(info: dict, run_id: str) -> list:
+    """Debrief the run into lessons and store them with the run (needs Runware and the API)."""
+    import api_client
+    import llm
 
-    outcomes = {}
-
-    decide_rescue_easy(log, rng, state, 5, "living", "victim-regular", "Neighbor")
-    outcomes["victim-regular"] = "rescued"
-    state["already_rescued"] = True
-
-    decide_rescue_teen(log, rng, state)
-    outcomes["victim-teen"] = "rescued"
-
-    decide_rescue_elderly(log, rng, state)
-    outcomes["victim-elderly"] = "rescued"
-
-    decide_rescue_couple(log, rng, state)
-    outcomes["victim-couple-a"] = "rescued"
-    outcomes["victim-couple-b"] = "rescued"
-
-    decide_stairwell_twist(log, rng, state)
-
-    decide_rescue_skeptic(log, rng, state)
-    if state.get("skeptic_pending"):
-        decide_rescue_skeptic(log, rng, state)  # second pass: already_rescued is now true, so this one lands
-    outcomes["victim-skeptic"] = "rescued"
-
-    decide_child_refusal(log, rng, state, memory)
-    last_two = log.events[-6:]
-    child_status = next((e["payload"]["victim_status"] for e in reversed(last_two)
-                          if e["agent_id"] == "rescue-1" and e["payload"].get("target") == "victim-child"
-                          and e["type"] == "status" and e["payload"]["victim_status"] in ("rescued", "lost")), "rescued")
-    outcomes["victim-child"] = child_status
-    outcomes["victim-parent"] = "rescued"
-
-    decide_human_verdict(log, rng, state, outcomes)
-
-    # The actual learning step: a run that involved the bolt at all teaches
-    # the system something, win or lose this time. `cautious_briefing` is
-    # sticky once learned; the probabilities keep improving each time the
-    # lesson gets reinforced.
-    if state.get("child_bolted"):
-        memory["cautious_briefing"] = True
-        memory["bolt_prob"] = round(max(0.12, memory["bolt_prob"] - 0.1), 3)
-        memory["found_prob"] = round(min(0.95, memory["found_prob"] + 0.08), 3)
-    if outcomes["victim-child"] == "lost":
-        memory["child_losses"] += 1
-    memory["runs"] += 1
-
-    if owns_memory:
-        save_memory(memory)
-
-    return log.events, memory, str(uuid.uuid4())
+    if not (info.get("llm") and api_client.enabled()):
+        return []
+    lessons = llm.debrief(info["outcomes"], info["decisions"], info["end_t"], [f"fire started in {info['origin']}"] + info["twists"])
+    if lessons:
+        api_client.post_lessons(run_id, lessons)
+    return lessons
 
 
 # -- output: SQL (same contract as db/fake_run.py) and/or JSON -------------
@@ -667,7 +419,7 @@ def build_sql(events, seed, run_id, scenario_id="apartment-3f") -> str:
     lines = ["begin;", f"delete from raw.events where run_id = '{run_id}';", f"delete from raw.runs where run_id = '{run_id}';"]
     lines.append(
         "insert into raw.runs (run_id, seed, scenario_id, notes, started_at, ended_at) values "
-        f"('{run_id}', {seed}, {sql_str(scenario_id)}, 'orchestrator run (rule-based decide_fn)', "
+        f"('{run_id}', {seed}, {sql_str(scenario_id)}, 'orchestrator run (sim)', "
         f"'{started.isoformat()}', '{ended.isoformat()}');"
     )
     for e in events:
@@ -710,9 +462,20 @@ def main():
     parser.add_argument("--json", type=str, default=None, help="also write the run as JSON here (for the web app)")
     parser.add_argument("--no-sql", action="store_true", help="skip printing SQL to stdout")
     parser.add_argument("--postgres", action="store_true", help="also write straight into the local ff-pg container")
+    parser.add_argument("--llm", action="store_true", help="have Runware write reasoning and lines (RUNWARE_API_KEY)")
+    parser.add_argument("--api", action="store_true", help="also send the run to the event API (FF_API_URL, FF_API_TOKEN)")
     args = parser.parse_args()
 
-    events, memory, run_id = build_run(args.seed)
+    if args.llm:
+        import llm
+
+        if not llm.enabled():
+            sys.exit("--llm needs RUNWARE_API_KEY (env or .env)")
+    events, memory, run_id = build_run(args.seed, use_llm=args.llm)
+    if args.llm:
+        llm.enrich_run(events)
+    print(f"seed {args.seed}: {memory['saved']}/{len(memory['outcomes'])} saved at t={memory['end_t']}s, "
+          f"twists {memory['twists'] or 'none'}, lessons used {memory['lessons_used']}", file=sys.stderr)
 
     if not args.no_sql or args.postgres:
         sql_text = build_sql(events, args.seed, run_id)
@@ -722,11 +485,21 @@ def main():
             write_to_postgres(sql_text)
             print(f"wrote run {run_id} to postgres (ff-pg/firefighter)", file=sys.stderr)
 
+    if args.api:
+        import api_client
+
+        if not api_client.enabled():
+            sys.exit("--api needs FF_API_URL (and FF_API_TOKEN) set")
+        api_client.post_run(events, args.seed, run_id, notes="orchestrator run (cli)")
+        print(f"sent run {run_id} ({len(events)} events) to {api_client.API_URL}", file=sys.stderr)
+        for l in after_run(memory, run_id):
+            print(f"  lesson [{l['role']}]: {l['lesson']}", file=sys.stderr)
+
     if args.json:
         out_path = Path(args.json)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps({"seed": args.seed, "run_id": run_id, "run_number": memory["runs"], "memory": memory, "events": events}, indent=2))
-        print(f"wrote {len(events)} events to {out_path} (run #{memory['runs']}, cautious_briefing={memory['cautious_briefing']})", file=sys.stderr)
+        out_path.write_text(json.dumps({"seed": args.seed, "run_id": run_id, "run_number": memory["runs"], "events": events}, indent=2))
+        print(f"wrote {len(events)} events to {out_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

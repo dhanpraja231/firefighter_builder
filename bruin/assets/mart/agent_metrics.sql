@@ -69,7 +69,7 @@ event_counts as (
     count(*) filter (where type in ('decide', 'act', 'request_approval'))   as decisions,
     count(*) filter (where type = 'move')                                    as moves,
     count(*) filter (where type = 'speak')                                   as utterances,
-    count(*) filter (where model is not null)                                as llm_calls,
+    count(*) filter (where latency_ms is not null)                           as llm_calls,
     round(avg(latency_ms))::int                                              as avg_latency_ms,
     round(percentile_cont(0.95) within group (order by latency_ms))::int     as p95_latency_ms,
     coalesce(sum(tokens_in), 0)                                              as tokens_in,

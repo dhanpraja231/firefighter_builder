@@ -177,6 +177,8 @@ export interface Engine9SceneProps {
   showDebugMarkers?: boolean;
   /** Added to the fire engine's parked z position. Nonzero while it's still driving in; 0 once parked. */
   engineZOffset?: number;
+  /** Index into STATIC_SHOTS (Engine9Scene.tsx). When set, the camera holds that fixed framing. */
+  shot?: number;
   /** Increment to cut the camera to a closeup framing `closeupTarget`. */
   closeupCue?: number;
   closeupTarget?: [number, number, number];

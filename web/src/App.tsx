@@ -8,6 +8,7 @@ import { buildExteriorLayout, buildNavGraph, createBuildingLayout } from "./scen
 import { findPath, pathLength, pathWaypoints } from "./scene/nav";
 import { PlaceholderWalker } from "./scene/characters/PlaceholderWalker";
 import { DemoScene, ENGINE_ENTRY_SECONDS } from "./demo/DemoScene";
+import { STATIC_SHOTS } from "./scene/Engine9Scene";
 import { DecisionLogPanel } from "./demo/DecisionLogPanel";
 import { CaptionBar } from "./demo/CaptionBar";
 import { activeMomentAtTime, decisionLogAtTime } from "./timeline/replay";
@@ -26,6 +27,10 @@ interface RunMemory {
   cautious_briefing: boolean;
   bolt_prob: number;
   found_prob: number;
+  saved?: number;
+  total?: number;
+  lessons_used?: number;
+  lessons_written?: number;
 }
 
 interface RunResponse {
@@ -155,6 +160,8 @@ export default function App() {
   const [worldState, setWorldState] = useState<WorldState>(demoWorldState);
   const [showDebug, setShowDebug] = useState(true);
   const [cameraCue, setCameraCue] = useState(0);
+  // ?shot=1|2|3 picks the starting camera shot (handy for recording)
+  const [shot, setShot] = useState(() => Math.max(0, Math.min(STATIC_SHOTS.length - 1, Number(new URLSearchParams(location.search).get("shot") ?? 1) - 1 || 0)));
   const [walkToken, setWalkToken] = useState<number | null>(null);
   const [walkInfo, setWalkInfo] = useState<string>("");
 
@@ -174,6 +181,16 @@ export default function App() {
   const [run, setRun] = useState<RunResponse | null>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
+
+  // Recorder hook (scripts/record.mjs): load a run and step time/shot frame by frame.
+  useEffect(() => {
+    (window as any).__ff = {
+      load: (data: RunResponse) => { setRun(data); setT(0); setPlaying(false); },
+      setT: (v: number) => setT(v),
+      setShot: (n: number) => setShot(n),
+      duration: () => (window as any).__ffDuration ?? 0,
+    };
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -181,6 +198,7 @@ export default function App() {
     () => (run && run.events.length ? ENGINE_ENTRY_SECONDS + Math.max(...run.events.map((e) => e.t_sim)) : 0),
     [run],
   );
+  (window as any).__ffDuration = duration;
   const decisionRows = useMemo(() => (run ? decisionLogAtTime(run.events, t) : []), [run, t]);
   const activeMoment = useMemo(
     () => (run ? activeMomentAtTime(run.events, Math.max(0, t - ENGINE_ENTRY_SECONDS)) : null),
@@ -218,7 +236,7 @@ export default function App() {
         <SceneBackground />
         {mode === "story" ? (
           <>
-            <DemoScene events={run?.events ?? []} t={t} />
+            <DemoScene events={run?.events ?? []} t={t} shot={shot} />
             {playing && run && (
               <PlaybackClock
                 key={`${run.seed}-${run.run_number}`}
@@ -244,10 +262,12 @@ export default function App() {
             )}
           </Engine9Scene>
         )}
-        <OrbitControls target={[2, 5.5, 5]} maxPolarAngle={Math.PI * 0.49} />
+        {/* Free orbit only in the dev harness; story mode uses the three static shots. */}
+        <OrbitControls enabled={mode !== "story"} target={[2, 5.5, 5]} maxPolarAngle={Math.PI * 0.49} />
       </Canvas>
 
       <ModeToggle mode={mode} setMode={setMode} />
+      {mode === "story" && <ShotSwitcher shot={shot} setShot={setShot} />}
 
       {mode === "story" ? (
         <RunPanel
@@ -374,10 +394,10 @@ function RunPanel({
             Attempt #{run.run_number} · seed {run.seed}
           </div>
           <div style={{ fontSize: 10, opacity: 0.65, marginTop: 2, lineHeight: 1.4 }}>
-            {run.memory.cautious_briefing
-              ? `Learned: lead with the gentle approach with the child (${run.memory.child_losses} earlier loss${
-                  run.memory.child_losses === 1 ? "" : "es"
-                } so far)`
+            {run.memory.total != null
+              ? `${run.memory.saved}/${run.memory.total} saved · used ${run.memory.lessons_used ?? 0} lesson${
+                  run.memory.lessons_used === 1 ? "" : "s"
+                } from earlier runs · wrote ${run.memory.lessons_written ?? 0} new`
               : "No lessons learned yet -- this is the first attempt."}
           </div>
 
@@ -408,6 +428,34 @@ function RunPanel({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Three fixed camera shots for story playback. Keys 1, 2, 3 switch too. */
+function ShotSwitcher({ shot, setShot }: { shot: number; setShot: (n: number) => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const n = Number(e.key) - 1;
+      if (n >= 0 && n < STATIC_SHOTS.length && !(e.target instanceof HTMLInputElement)) setShot(n);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setShot]);
+  return (
+    <div style={{ position: "absolute", left: "50%", bottom: 16, transform: "translateX(-50%)", display: "flex", gap: 6,
+                  background: "rgba(10,12,18,0.82)", padding: 6, borderRadius: 8, border: "1px solid #2a2f3d" }}>
+      {STATIC_SHOTS.map((s, i) => (
+        <button
+          key={s.name}
+          onClick={() => setShot(i)}
+          style={{ padding: "6px 12px", fontSize: 12, fontFamily: "monospace", cursor: "pointer", borderRadius: 5,
+                   border: "1px solid " + (i === shot ? "#e7eefc" : "#2a2f3d"),
+                   background: i === shot ? "#e7eefc" : "#1a1d26", color: i === shot ? "#10131a" : "#e7eefc" }}
+        >
+          {i + 1} · {s.name}
+        </button>
+      ))}
     </div>
   );
 }
