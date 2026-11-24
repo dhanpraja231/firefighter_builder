@@ -248,7 +248,8 @@ export default function App() {
             )}
           </Engine9Scene>
         )}
-        <OrbitControls target={[2, 5.5, 5]} maxPolarAngle={Math.PI * 0.49} />
+        {/* Free orbit only when not playing a story run; during playback the camera director drives the shots. */}
+        <OrbitControls enabled={!(mode === "story" && playing)} target={[2, 5.5, 5]} maxPolarAngle={Math.PI * 0.49} />
       </Canvas>
 
       <ModeToggle mode={mode} setMode={setMode} />

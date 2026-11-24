@@ -75,3 +75,9 @@ create table if not exists learn.verdicts (
   note        text,
   decided_at  timestamptz not null default now()
 );
+
+-- Memory resets: runs before the latest reset don't count toward the agents' track record.
+create table if not exists learn.resets (
+  id       serial primary key,
+  reset_at timestamptz not null default now()
+);

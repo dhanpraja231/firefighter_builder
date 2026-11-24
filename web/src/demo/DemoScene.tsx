@@ -9,6 +9,7 @@ import type { TimelineEvent } from "../timeline/schema";
 /** Seconds the scene opens on: the engine driving in before any agent decision plays. */
 export const ENGINE_ENTRY_SECONDS = 3.5;
 const ENGINE_ENTRY_START_OFFSET = 16; // meters down the street the engine starts from
+const MIN_SHOT_SECONDS = 4; // hold each closeup at least this long
 
 function easeOutCubic(x: number): number {
   return 1 - Math.pow(1 - x, 3);
@@ -28,21 +29,30 @@ export function DemoScene({ events, t }: { events: TimelineEvent[]; t: number })
     return map;
   }, [events]);
 
-  // Cut the camera to whoever's currently speaking/deciding -- re-fires only when the active agent changes.
+  // Cut the camera to whoever's currently speaking/deciding. Only agents with a body in the scene
+  // (they have move events) can be framed, and each shot is held at least MIN_SHOT_SECONDS so the
+  // camera doesn't jump on every event. Between cuts the camera follows that agent as they move.
   const activeMoment = useMemo(() => activeMomentAtTime(events, storyT), [events, storyT]);
+  const embodied = useMemo(() => new Set(events.filter((e) => e.type === "move").map((e) => e.agent_id)), [events]);
   // Hold the wide establishing shot through the engine's entrance before cutting to anyone.
   const cutsAllowed = t > ENGINE_ENTRY_SECONDS + 1.5;
   const [closeupCue, setCloseupCue] = useState(0);
-  const lastSpeaker = useRef<string | null>(null);
+  const [shotAgent, setShotAgent] = useState<string | null>(null);
+  const lastCutAt = useRef(-Infinity);
   useEffect(() => {
     if (!cutsAllowed) return;
     const id = activeMoment?.agentId ?? null;
-    if (id && id !== lastSpeaker.current) {
-      lastSpeaker.current = id;
-      setCloseupCue((n) => n + 1);
-    }
-  }, [activeMoment, cutsAllowed]);
-  const closeupTarget = cutsAllowed && activeMoment ? frames[activeMoment.agentId]?.position : undefined;
+    if (!id || id === shotAgent || !embodied.has(id) || id === "director" || id === "human") return;
+    if (t - lastCutAt.current < MIN_SHOT_SECONDS) return;
+    lastCutAt.current = t;
+    setShotAgent(id);
+    setCloseupCue((n) => n + 1);
+  }, [activeMoment, cutsAllowed, embodied, shotAgent, t]);
+  useEffect(() => {
+    // a new run or a replay from the start goes back to the wide shot
+    if (t < 0.5) { setShotAgent(null); lastCutAt.current = -Infinity; }
+  }, [t, events]);
+  const closeupTarget = cutsAllowed && shotAgent ? frames[shotAgent]?.position : undefined;
 
   return (
     <Engine9Scene

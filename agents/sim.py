@@ -19,7 +19,6 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 
 SPREAD = {
-    "origin": "3-kitchen",
     "origin_fire": 0.35,
     "grow": 0.05,            # fire growth per second in a burning room
     "ignite_at": 0.3,        # a room spreads fire once it is this hot
@@ -62,6 +61,25 @@ APPROACHES = {
     "victim-family": {"order": ("Tell the family to move now", 2), "gentle": ("Go slow with the child, hold their hand", 6)},
     "victim-regular": {"guide": ("Give directions and walk them out", 1)},
 }
+DOOR_W = 0.94
+# Door centers (x, z) per same-floor edge, from web/src/scene/layout.ts doorsFor().
+DOORS = {
+    frozenset(("living", "hall")): (6.0, 2.35),
+    frozenset(("kitchen", "hall")): (10.0, 2.35),
+    frozenset(("living", "bedroom-w")): (2.55 + DOOR_W / 2, 6.15),
+    frozenset(("kitchen", "bedroom-e")): (12.7 + DOOR_W / 2, 6.15),
+    frozenset(("bedroom-w", "landing")): (6.0, 9.85 + DOOR_W / 2),
+    frozenset(("bedroom-e", "landing")): (10.0, 9.85 + DOOR_W / 2),
+}
+# Windows the ladder can reach: inside point, outside point (layout.ts windowsFor()).
+WINDOWS = {
+    "living": ((0.7, 2.5), (-0.8, 2.5)),
+    "bedroom-w": ((0.7, 9.2), (-0.8, 9.2)),
+    "bedroom-e": ((13.2, 11.3), (13.2, 12.8)),
+    "landing": ((8.0, 11.3), (8.0, 12.8)),
+}
+FIRE_ORIGINS = [k for k in ("kitchen", "living", "bedroom-w", "bedroom-e")]
+TRAIL_S = 0.6  # escorted people walk this far behind the robot
 LADDER_ROOMS = {"living": "window-living-w", "bedroom-w": "window-bed-w", "bedroom-e": "window-bed-e-n", "landing": "window-landing-n"}
 
 
@@ -106,7 +124,9 @@ class World:
         self.blocked = set()
         self.fire = {r: 0.0 for r in self.g if r != EXIT}
         self.smoke = {r: 0.0 for r in self.g if r != EXIT}
-        self.fire[SPREAD["origin"]] = SPREAD["origin_fire"]
+        occupied = {d["room"] for d in UNITS.values()}
+        self.origin = self.rng.choice([rid(f, k) for f in FLOORS for k in FIRE_ORIGINS if rid(f, k) not in occupied])
+        self.fire[self.origin] = SPREAD["origin_fire"]
         self.emitted = {}
         self.t = 0
         self.units = {u: {**d, "status": "trapped", "found": False, "air": {m: 100.0 for m in d["members"]},
@@ -148,17 +168,39 @@ class World:
             p.append(prev[p[-1]])
         return list(reversed(p)), dist[b]
 
-    def walk_stairs(self, a, b, step, agents):
-        """Emit move waypoints along the visible stair flight for a hall-to-hall edge, spread over its travel time."""
-        if not self.stairs or EXIT in (a, b) or kind_of(a) != "hall" or kind_of(b) != "hall" or floor_of(a) == floor_of(b):
-            return
-        pts = self.stairs(min(floor_of(a), floor_of(b)))
-        if floor_of(b) < floor_of(a):
-            pts = list(reversed(pts))
+    def _xz(self, room, xz):
+        f = 1 if room == EXIT else floor_of(room)
+        return {"x": xz[0], "y": (f - 1) * 3.0, "z": xz[1], "floor": f - 1}
+
+    def edge_points(self, a, b):
+        """Waypoints strictly between rooms a and b, so nobody walks through a wall."""
+        if EXIT in (a, b):  # front door on the west wall of 1-living, then the living-hall door
+            pts = [self._xz("1-hall", (0.7, 1.9)), self._xz("1-hall", DOORS[frozenset(("living", "hall"))])]
+            return pts if a == EXIT else list(reversed(pts))
+        if floor_of(a) != floor_of(b):
+            if not self.stairs:
+                return []
+            pts = self.stairs(min(floor_of(a), floor_of(b)))
+            return pts if floor_of(b) > floor_of(a) else list(reversed(pts))
+        door = DOORS.get(frozenset((kind_of(a), kind_of(b))))
+        return [self._xz(a, door)] if door else []
+
+    def walk_edge(self, a, b, t0, step, walkers):
+        """Emit moves along edge a -> b, spread over `step` seconds from t0; walker k trails by k * TRAIL_S."""
+        pts = self.edge_points(a, b) + [self.room_pos(b)]
         for i, pt in enumerate(pts):
-            for agent_id, role in agents:
+            for k, (agent_id, role) in enumerate(walkers):
                 self.log._push(agent_id, role, "move", {"position": pt}, None, llm=False, dt=0)
-                self.log.events[-1]["t_sim"] = round(self.t + step * (i + 1) / (len(pts) + 1), 1)
+                self.log.events[-1]["t_sim"] = round(t0 + step * (i + 1) / len(pts) + k * TRAIL_S, 2)
+
+    def walk_path(self, path, t0, walkers, per_edge=None):
+        """Walk a whole room path from t0; returns the arrival time."""
+        t = t0
+        for a, b in zip(path, path[1:]):
+            step = per_edge(a, b) if per_edge else self.g[a][b]
+            self.walk_edge(a, b, t, step, walkers)
+            t += step
+        return t
 
     # ---------- fire, smoke, air ----------
     def step_fire(self):
@@ -223,19 +265,25 @@ class World:
         prev = EXIT
         for f in FLOORS:
             hall = rid(f, "hall")
-            t += SCOUT_EDGE_S if prev == EXIT else SCOUT_STAIR_S
-            plan.append((t, "move", hall))
-            t += SCOUT_SCAN_S
+            step = SCOUT_EDGE_S if prev == EXIT else SCOUT_STAIR_S
+            plan.append((t, "walk", (prev, hall, step)))
+            t += step + SCOUT_SCAN_S
             plan.append((t, "scan", f))
             prev = hall
-        plan.append((t + 6, "move", EXIT))
+        plan.append((t + 1, "home", prev))
         return plan
 
     def step_scout(self):
         while self.scout_plan and self.scout_plan[0][0] <= self.t:
-            _, what, arg = self.scout_plan.pop(0)
-            if what == "move":
-                self.log.move("scout-1", "scout", self.room_pos(arg), dt=0)
+            t0, what, arg = self.scout_plan.pop(0)
+            if what == "walk":
+                a, b, step = arg
+                self.walk_edge(a, b, self.t, step, [("scout-1", "scout")])
+                continue
+            if what == "home":
+                p, _ = self.path(arg, EXIT)
+                if p:
+                    self.walk_path(p, self.t, [("scout-1", "scout")], lambda a, b: SCOUT_STAIR_S if floor_of(a) != floor_of(b) else SCOUT_EDGE_S)
                 continue
             found = [u for uid, u in self.units.items() if floor_of(u["room"]) == arg and u["status"] == "trapped"]
             self.log.act("scout-1", "scout", "scan_floor", rid(arg, "hall"),
@@ -351,14 +399,19 @@ class World:
             self.ladder.update(busy_until=self.t + LADDER_S, unit=uid)
             win = rid(floor_of(u["room"]), LADDER_ROOMS[kind_of(u["room"])])
             self.log.world({"type": "ladder", "deployed": 1, "targetWindowId": win}, f"Ladder to {win} for {u['label']}.", dt=0)
-            for m in u["members"]:
-                if m not in u["lost"]:
-                    self.log.status(m, "moving", "ladder", dt=0)
+            inside, outside = WINDOWS[kind_of(u["room"])]
+            ground = (outside[0] - 0.8, outside[1]) if outside[0] < 0 else (outside[0], outside[1] + 0.8)
+            for k, m in enumerate(x for x in u["members"] if x not in u["lost"]):
+                self.log.status(m, "moving", "ladder", dt=0)
+                for frac, pt in ((0.55, self._xz(u["room"], inside)), (0.65, self._xz(u["room"], outside)),
+                                 (0.9, {**self._xz("1-hall", ground)}), (1.0, self.ext("engine"))):
+                    self.log._push(m, "victim", "move", {"position": pt}, None, llm=False, dt=0)
+                    self.log.events[-1]["t_sim"] = round(self.t + LADDER_S * frac + k * TRAIL_S, 2)
         else:
             p, _ = self.path(self.robot["at"], u["room"])
             first = self.g[p[0]][p[1]] if len(p) > 1 else 0
             if len(p) > 1:
-                self.walk_stairs(p[0], p[1], first, [("rescue-1", "rescue")])
+                self.walk_edge(p[0], p[1], self.t, first, [("rescue-1", "rescue")])
             self.robot["task"] = {"unit": uid, "phase": "to", "path": p[1:], "next_t": self.t + first}
 
     def apply_hose(self, req, out):
@@ -373,8 +426,8 @@ class World:
             if self.hose["at"] != hall:
                 p, _ = self.path(self.hose["at"], hall)
                 if p:
+                    self.walk_path(p, self.t, [("hose-1", "suppression")], lambda a, b: 2.0 if floor_of(a) != floor_of(b) else 1.2)
                     self.hose["at"] = hall
-                    self.log.move("hose-1", "suppression", self.room_pos(hall), dt=0)
             self.hose["target"] = arg
             self.log.world({"type": "hose", "active": True, "targetWindowId": None}, None, dt=0)
         else:
@@ -422,13 +475,17 @@ class World:
             if bolt:
                 hide = rid(floor_of(u["room"]), "landing")
                 self.log.speak("victim-child", "victim", "No! I don't want to go with the robot!", None, dt=0)
-                self.log.move("victim-child", "victim", self.room_pos(hide), dt=0)
+                self.walk_edge(u["room"], hide, self.t, 2.0, [("victim-child", "victim")])
+                u["child_back_at"] = True
                 self.log.world({"type": "smoke", "roomId": hide, "intensity": round(self.smoke[hide], 2)},
                                "The child ran off and hid. The parent won't leave without them.", dt=0)
                 self.log.events[-1]["payload"]["twist"] = "child-missing"
                 delay += 10
         if uid == "victim-elderly" and choice == "carry":
             u["carry"] = True
+        if u.pop("child_back_at", None):  # child is coaxed back just before the family walks out
+            hide = rid(floor_of(u["room"]), "landing")
+            self.walk_edge(hide, u["room"], self.t + max(2.5, delay - 2.5), 2.0, [("victim-child", "victim")])
         return delay, refused
 
     # ---------- rescue robot movement ----------
@@ -442,12 +499,8 @@ class World:
             nxt = task["path"].pop(0)
             prev = self.robot["at"]
             self.robot["at"] = nxt
-            self.log.move("rescue-1", "rescue", self.room_pos(nxt), dt=0)
             if task["phase"] == "back":
                 u["room"] = nxt
-                for m in u["members"]:
-                    if m not in u["lost"]:
-                        self.log.move(m, "victim", self.room_pos(nxt), dt=0)
             if task["path"]:
                 step = self.g[nxt][task["path"][0]] * (ESCORT * (1.5 if u.get("carry") else 1) if task["phase"] == "back" else 1)
                 if frozenset((nxt, task["path"][0])) in self.blocked or (task["path"][0] != EXIT and self.fire[task["path"][0]] > SPREAD["impassable"]):
@@ -462,7 +515,7 @@ class World:
                     step = self.g[nxt][task["path"][0]]
                 walkers = [("rescue-1", "rescue")] + ([(m, "victim") for m in u["members"] if m not in u["lost"]]
                                                       if task["phase"] == "back" else [])
-                self.walk_stairs(nxt, task["path"][0], step, walkers)
+                self.walk_edge(nxt, task["path"][0], self.t, step, walkers)
                 task["next_t"] = self.t + step
                 return
         if task["phase"] in ("to", "back"):
@@ -492,13 +545,15 @@ class World:
                 u["busy"] = False
                 self.robot["task"] = None
                 return
-            task.update(phase="back", path=p[1:], next_t=self.t + self.g[p[0]][p[1]] * ESCORT)
+            step = self.g[p[0]][p[1]] * ESCORT
+            self.walk_edge(p[0], p[1], self.t, step,
+                           [("rescue-1", "rescue")] + [(m, "victim") for m in u["members"] if m not in u["lost"]])
+            task.update(phase="back", path=p[1:], next_t=self.t + step)
 
     def finish_unit(self, uid, helper):
         u = self.units[uid]
         alive = [m for m in u["members"] if m not in u["lost"]]
         for m in alive:
-            self.log.move(m, "victim", self.ext("engine") if helper == "ladder" else self.ext("entry"), dt=0)
             self.log.status(m, "rescued", helper, dt=0)
         u["status"] = "rescued" if alive else "lost"
         u["room"] = EXIT
@@ -524,15 +579,16 @@ class World:
         return all(u["status"] in ("rescued", "lost") for u in self.units.values())
 
     def run(self):
-        self.log.world({"type": "fire", "roomId": SPREAD["origin"], "intensity": SPREAD["origin_fire"]},
-                       "Grease fire on the floor 3 stove.", dt=0)
+        self.log.world({"type": "fire", "roomId": self.origin, "intensity": SPREAD["origin_fire"]},
+                       f"Fire breaks out in {self.origin}.", dt=0)
         self.log.world({"type": "engine_lights", "on": True}, None, dt=0)
         self.log.move("rescue-1", "rescue", self.ext("entry"), dt=0)
         self.log.move("hose-1", "suppression", self.ext("hydrant"), dt=0)
         self.log.move("scout-1", "scout", self.ext("engine"), dt=0)
         for uid, u in self.units.items():
-            for m in u["members"]:
-                self.log.move(m, "victim", self.room_pos(u["room"]), dt=0)
+            for k, m in enumerate(u["members"]):  # pairs stand side by side, not inside each other
+                pt = self.room_pos(u["room"])
+                self.log.move(m, "victim", {**pt, "x": pt["x"] + 0.6 * k}, dt=0)
         while self.t < SPREAD["collapse_s"] and not self.done():
             self.log.t = float(self.t)
             self.step_twist()
@@ -576,4 +632,4 @@ class World:
 def run(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs=None):
     w = World(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs)
     outcomes = w.run()
-    return outcomes, w.decisions, w.t
+    return outcomes, w.decisions, w.t, w.origin

@@ -402,6 +402,18 @@ async def verdict(run_id: uuid.UUID, body: VerdictIn):
     return {"verdict": body.verdict}
 
 
+@app.post("/learning/reset", dependencies=[Depends(require_token)])
+async def reset_learning():
+    """Erase the agents' memory: all lessons and verdicts, and start the track record over. Run history stays."""
+    async with pool.connection() as conn, conn.transaction():
+        cur = await conn.execute("delete from learn.lessons")
+        lessons = cur.rowcount
+        cur = await conn.execute("delete from learn.verdicts")
+        verdicts = cur.rowcount
+        await conn.execute("insert into learn.resets default values")
+    return {"deleted_lessons": lessons, "deleted_verdicts": verdicts}
+
+
 @app.get("/learning")
 async def learning(limit: int = 12):
     """What the next run should know: recent lessons (with the verdict on their run) and the track record."""
@@ -427,6 +439,7 @@ async def learning_curve():
                   v.verdict,
                   (select count(*) from learn.lessons l where l.run_id = r.run_id) as lessons
            from raw.runs r left join last_status s using (run_id) left join learn.verdicts v using (run_id)
+           where r.started_at > coalesce((select max(reset_at) from learn.resets), '-infinity')
            group by r.run_id, v.verdict order by r.started_at""")
 
 

@@ -153,6 +153,12 @@ function CameraDirector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cue]);
 
+  // Latest position of the framed agent, so the camera keeps following them between cuts.
+  const follow = useRef<THREE.Vector3 | null>(null);
+  useEffect(() => {
+    follow.current = closeupTarget ? new THREE.Vector3(...closeupTarget) : null;
+  }, [closeupTarget]);
+
   useEffect(() => {
     if (closeupCue === undefined || !closeupTarget) return;
     const [x, y, z] = closeupTarget;
@@ -166,7 +172,16 @@ function CameraDirector({
   }, [closeupCue]);
 
   useFrame((_, delta) => {
-    if (!tweening.current) return;
+    if (!tweening.current) {
+      if (!follow.current) return;
+      // gently track the agent: same viewing direction as the cut, easing toward them
+      const k = 1 - Math.exp(-2.5 * delta);
+      destLookAt.current.lerp(new THREE.Vector3(follow.current.x, follow.current.y + 1.3, follow.current.z), k);
+      destPos.current.copy(destLookAt.current).add(CLOSEUP_OFFSET).setY(destLookAt.current.y - 1.3 + CLOSEUP_OFFSET.y);
+      camera.position.lerp(destPos.current, k);
+      camera.lookAt(destLookAt.current);
+      return;
+    }
     elapsed.current += delta;
     const t = Math.min(1, elapsed.current / duration.current);
     const eased = 1 - Math.pow(1 - t, 3);

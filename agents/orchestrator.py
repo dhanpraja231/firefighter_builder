@@ -359,13 +359,13 @@ def build_run(seed: int, memory: dict | None = None, use_llm: bool | None = None
 
     log = EventLog()
     log.rng = random.Random(seed)
-    outcomes, decisions, end_t = sim.run(seed, decide, lessons, history, log, pos, ext, stairs=_stair_climb)
+    outcomes, decisions, end_t, origin = sim.run(seed, decide, lessons, history, log, pos, ext, stairs=_stair_climb)
     twists = sorted({e["payload"]["twist"] for e in log.events if (e["payload"] or {}).get("twist")})
     saved = sum(1 for st, _ in outcomes.values() if st == "rescued")
     log.t = float(end_t)
     log.speak("director", "director", f"{saved} of {len(outcomes)} out. Run complete at {end_t} seconds.", None, dt=1.0)
     log.events[-1]["model"] = None
-    info = {"runs": runs + 1, "outcomes": outcomes, "decisions": decisions, "end_t": end_t, "twists": twists,
+    info = {"runs": runs + 1, "origin": origin, "outcomes": outcomes, "decisions": decisions, "end_t": end_t, "twists": twists,
             "saved": saved, "llm": use_llm, "lessons_used": sum(len(v) for v in lessons.values())}
     return log.events, info, str(uuid.uuid4())
 
@@ -377,7 +377,7 @@ def after_run(info: dict, run_id: str) -> list:
 
     if not (info.get("llm") and api_client.enabled()):
         return []
-    lessons = llm.debrief(info["outcomes"], info["decisions"], info["end_t"], info["twists"])
+    lessons = llm.debrief(info["outcomes"], info["decisions"], info["end_t"], [f"fire started in {info['origin']}"] + info["twists"])
     if lessons:
         api_client.post_lessons(run_id, lessons)
     return lessons
