@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { Engine9Scene } from "./scene/Engine9Scene";
+import { ESTABLISHING_SHOT, Engine9Scene } from "./scene/Engine9Scene";
 import { createDefaultWorldState, type WorldState } from "./scene/events";
 import { buildExteriorLayout, buildNavGraph, createBuildingLayout } from "./scene/layout";
 import { findPath, pathLength, pathWaypoints } from "./scene/nav";
@@ -22,7 +22,17 @@ const DEMO_DOOR = "1-door-living-hall";
 // `?server=http://127.0.0.1:8788` points the viewer at another story server (testing); `?speed=` is passed to /stream.
 const PAGE_QUERY = new URLSearchParams(window.location.search);
 const ORCHESTRATOR_URL = PAGE_QUERY.get("server") ?? "http://127.0.0.1:8787";
-const STREAM_QUERY = PAGE_QUERY.get("speed") ? `?speed=${encodeURIComponent(PAGE_QUERY.get("speed")!)}` : "";
+// `?seeds=12,82` makes the 1st and 2nd story use exactly those seeds (for demos); otherwise each story picks its own.
+const SEED_QUEUE = (PAGE_QUERY.get("seeds") ?? "").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
+
+function streamUrl(seed?: number): string {
+  const params = new URLSearchParams();
+  const speed = PAGE_QUERY.get("speed");
+  if (speed) params.set("speed", speed);
+  if (seed) params.set("seed", String(seed));
+  const q = params.toString();
+  return `${ORCHESTRATOR_URL}/stream${q ? `?${q}` : ""}`;
+}
 
 interface RunMemory {
   runs: number;
@@ -236,6 +246,7 @@ export default function App() {
   const source = useRef<EventSource | null>(null);
   /** Story time (seconds) of the newest event received; playback never runs past it. */
   const latest = useRef(0);
+  const storiesStarted = useRef(0);
 
   useEffect(() => () => source.current?.close(), []);
 
@@ -293,7 +304,7 @@ export default function App() {
     setPlaying(true);
     setLive(true);
 
-    const es = new EventSource(`${ORCHESTRATOR_URL}/stream${STREAM_QUERY}`);
+    const es = new EventSource(streamUrl(SEED_QUEUE[storiesStarted.current++]));
     source.current = es;
     let opened = false;
     es.addEventListener("start", (m) => {
@@ -382,7 +393,7 @@ export default function App() {
           bright practical lights in every room; exposure is raised so interiors still read warm. */}
       <Canvas
         shadows
-        camera={{ position: [-24, 15, -31], fov: 45, near: 0.1, far: 200 }}
+        camera={{ position: ESTABLISHING_SHOT.position.toArray(), fov: 45, near: 0.1, far: 200 }}
         gl={{ toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
       >
         <SceneBackground />
@@ -421,7 +432,7 @@ export default function App() {
             )}
           </Engine9Scene>
         )}
-        <OrbitControls makeDefault target={[2, 5.5, 5]} maxPolarAngle={Math.PI * 0.49} />
+        <OrbitControls makeDefault target={ESTABLISHING_SHOT.target.toArray()} maxPolarAngle={Math.PI * 0.49} />
       </Canvas>
 
       <ModeToggle mode={mode} setMode={setMode} />

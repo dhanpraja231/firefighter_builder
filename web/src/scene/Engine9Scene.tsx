@@ -23,14 +23,14 @@ import { FireEngine, ladderTurntablePosition } from "./vehicles/FireEngine";
 import { Ladder } from "./vehicles/Ladder";
 
 /**
- * South-west three-quarter view: the south and east faces are the cutaway
- * (no exterior wall), so the camera must sit at negative z to see into the
- * rooms. Staying west of the building also keeps the fire engine and street
- * in frame.
+ * Default view: straight into the open face of the building. The south and east sides have no
+ * exterior wall (the cutaway), so from the south the viewer sees all five floors, the stairs and
+ * everyone inside at once, with the street and the fire engine at the left edge. The camera must stay
+ * at negative z to look into the rooms rather than at the closed west/north facade.
  */
-const ESTABLISHING_SHOT = {
-  position: new THREE.Vector3(-24, 15, -31),
-  target: new THREE.Vector3(2, 5.5, 5),
+export const ESTABLISHING_SHOT = {
+  position: new THREE.Vector3(-1, 8, -21.5),
+  target: new THREE.Vector3(6, 6.8, 6),
 };
 
 /**
@@ -118,12 +118,10 @@ export function Engine9Scene({
 }
 
 /**
- * Offset from the active character to the camera. Deliberately keeps the same
- * south-west viewing direction as the establishing shot (just much closer), so
- * the camera stays outside the cutaway looking in -- a tight orbit-style closeup
- * would put it inside a room, clipping through walls and furniture.
+ * Offset from the active character to the camera. Keeps the camera on the open (south) side of the
+ * building, slightly left and above, so every cut looks into the cutaway instead of at a closed wall.
  */
-const CLOSEUP_OFFSET = new THREE.Vector3(-14, 6, -19);
+const CLOSEUP_OFFSET = new THREE.Vector3(-5, 2.6, -12);
 
 function CameraDirector({
   cue,

@@ -11,3 +11,5 @@ cdk.out/
 logs/runs
 logs/*.log
 *.py[cod]
+
+demo_out/

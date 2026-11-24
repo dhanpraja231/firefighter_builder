@@ -9,6 +9,9 @@ assigns a task, or picks an outcome.
 If you only read one section, read [4. Event schema](#4-event-schema) and
 [5. Mounting characters](#5-mounting-characters).
 
+How the film itself is made (autonomous agents, the live `/stream` protocol, the animation hints
+the engine adds to events, recording) is in [`LIVE_STORY.md`](LIVE_STORY.md).
+
 ## Contents
 
 - [1. Coordinate system](#1-coordinate-system)
