@@ -113,7 +113,8 @@ def build_graph():
 
 
 class World:
-    def __init__(self, seed, decide, lessons_by_role, history_line, log, pos, ext, stairs=None):
+    def __init__(self, seed, decide, lessons_by_role, history_line, log, pos, ext, stairs=None, briefing=None):
+        self.briefing = briefing  # Glasser building dossier for the commander (agents/tools/glasser_briefing.py)
         self.stairs = stairs  # orchestrator._stair_climb: waypoints along the switchback between two floors
         self.rng = random.Random(seed)
         self.decide = decide
@@ -315,6 +316,9 @@ class World:
     def open_units(self):
         return [uid for uid, u in self.units.items() if u["found"] and u["status"] == "trapped" and not u["busy"]]
 
+    def dossier(self):
+        return f"Building dossier (Glasser): {self.briefing}\n" if self.briefing else ""
+
     def building_line(self):
         burning = [r for r, v in self.fire.items() if v > 0.2]
         smoky = sorted({floor_of(r) for r, v in self.smoke.items() if v > 0.4})
@@ -334,7 +338,7 @@ class World:
                     if self.path(self.robot["at"], self.units[u]["room"])[0] is not None
                     and self.path(self.units[u]["room"], EXIT)[0] is not None]
             if opts:
-                obs = self.building_line() + "\nrescue-1 is free at " + self.robot["at"] + ". Found and waiting:\n" + \
+                obs = self.dossier() + self.building_line() + "\nrescue-1 is free at " + self.robot["at"] + ". Found and waiting:\n" + \
                       "\n".join(self.unit_obs(u, self.robot["at"]) for u in units)
                 reqs.append(("commander", "commander", obs, opts, "robot"))
         if self.ladder["busy_until"] is None:
@@ -342,7 +346,7 @@ class World:
                     if kind_of(self.units[u]["room"]) in LADDER_ROOMS and floor_of(self.units[u]["room"]) <= 4]
             if opts:
                 opts.append({"id": "ladder:hold", "label": "Keep the ladder truck in reserve"})
-                obs = self.building_line() + "\nThe ladder truck is free (one window rescue takes about 24s). Found and waiting:\n" + \
+                obs = self.dossier() + self.building_line() + "\nThe ladder truck is free (one window rescue takes about 24s). Found and waiting:\n" + \
                       "\n".join(self.unit_obs(u, EXIT) for u in units)
                 reqs.append(("commander", "commander", obs, opts, "ladder"))
         return reqs
@@ -582,6 +586,16 @@ class World:
         self.log.world({"type": "fire", "roomId": self.origin, "intensity": SPREAD["origin_fire"]},
                        f"Fire breaks out in {self.origin}.", dt=0)
         self.log.world({"type": "engine_lights", "on": True}, None, dt=0)
+        try:
+            from assignments import SCOUT_ASSIGN_REASONING, SCOUT_ASSIGN_UTTERANCE
+        except ImportError:
+            SCOUT_ASSIGN_REASONING, SCOUT_ASSIGN_UTTERANCE = "Need the full picture first.", "Scout, sweep every floor."
+        self.log.decide("commander", "commander", {"action": "assign", "target": "scout-1", "utterance": SCOUT_ASSIGN_UTTERANCE},
+                        " ".join(filter(None, [SCOUT_ASSIGN_REASONING, self.briefing])), dt=0)
+        self.log.events[-1]["model"] = None
+        self.log.speak("commander", "commander", SCOUT_ASSIGN_UTTERANCE, None, dt=0)
+        self.log.events[-1]["model"] = None
+        self.log.events[-1]["payload"]["voiced"] = True
         self.log.move("rescue-1", "rescue", self.ext("entry"), dt=0)
         self.log.move("hose-1", "suppression", self.ext("hydrant"), dt=0)
         self.log.move("scout-1", "scout", self.ext("engine"), dt=0)
@@ -629,7 +643,7 @@ class World:
         return out
 
 
-def run(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs=None):
-    w = World(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs)
+def run(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs=None, briefing=None):
+    w = World(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs, briefing)
     outcomes = w.run()
     return outcomes, w.decisions, w.t, w.origin

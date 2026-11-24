@@ -338,6 +338,22 @@ class EventLog:
 
 # -- the run: agents/sim.py owns the world clock, failure and decision points --
 
+def _glasser_commander_note(scenario_id: str = "apartment-3f") -> str | None:
+    """Offline Glasser fixture text for Commander reasoning (no live API calls)."""
+    try:
+        from tools.glasser_briefing import load, summarize
+    except ImportError:
+        try:
+            from agents.tools.glasser_briefing import load, summarize
+        except ImportError:
+            return None
+    try:
+        # Scenario owns layout; Glasser owns building age/risk only.
+        return summarize(load(scenario_id), floors=5, scenario_kind="multifamily walkup")
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+
+
 def build_run(seed: int, memory: dict | None = None, use_llm: bool | None = None):
     """Run one sim. Agents decide with Runware when the key is set (or use_llm=True),
     otherwise with the first-option rule. Lessons from earlier runs come from the
@@ -359,7 +375,9 @@ def build_run(seed: int, memory: dict | None = None, use_llm: bool | None = None
 
     log = EventLog()
     log.rng = random.Random(seed)
-    outcomes, decisions, end_t, origin = sim.run(seed, decide, lessons, history, log, pos, ext, stairs=_stair_climb)
+    briefing = _glasser_commander_note()
+    outcomes, decisions, end_t, origin = sim.run(seed, decide, lessons, history, log, pos, ext, stairs=_stair_climb,
+                                                 briefing=briefing)
     twists = sorted({e["payload"]["twist"] for e in log.events if (e["payload"] or {}).get("twist")})
     saved = sum(1 for st, _ in outcomes.values() if st == "rescued")
     log.t = float(end_t)

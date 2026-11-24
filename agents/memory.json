@@ -1,7 +1,7 @@
 {
-  "runs": 33,
+  "runs": 0,
   "child_losses": 0,
-  "cautious_briefing": true,
-  "bolt_prob": 0.12,
-  "found_prob": 0.95
+  "cautious_briefing": false,
+  "bolt_prob": 0.55,
+  "found_prob": 0.75
 }
