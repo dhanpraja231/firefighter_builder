@@ -34,6 +34,16 @@ const ESTABLISHING_SHOT = {
 };
 
 /**
+ * Fixed camera positions for story playback, switched with `shot`. All sit on the
+ * cutaway (south/west) side so the camera never ends up inside a wall.
+ */
+export const STATIC_SHOTS = [
+  { name: "Wide", position: new THREE.Vector3(-24, 15, -31), target: new THREE.Vector3(2, 5.5, 5) },
+  { name: "Street", position: new THREE.Vector3(-9, 2.4, -13), target: new THREE.Vector3(5, 5.5, 5) },
+  { name: "Cutaway", position: new THREE.Vector3(8, 7.5, -21), target: new THREE.Vector3(8, 7, 6) },
+] as const;
+
+/**
  * The full Engine 9 environment: building, fire engine, ladder, hose, and
  * night exterior. Pure presentation driven by `worldState` — see
  * INTEGRATION.md for the coordinate system, node ids, and event schema this
@@ -46,6 +56,7 @@ export function Engine9Scene({
   engineZOffset = 0,
   closeupCue,
   closeupTarget,
+  shot,
   children,
 }: Engine9SceneProps) {
   const layout = useMemo(() => createBuildingLayout(), []);
@@ -94,7 +105,7 @@ export function Engine9Scene({
   return (
     <group name="engine9-scene">
       <fog attach="fog" args={[palette.fog, 48, 145]} />
-      <CameraDirector cue={cameraCue} closeupCue={closeupCue} closeupTarget={closeupTarget} />
+      <CameraDirector cue={cameraCue} closeupCue={closeupCue} closeupTarget={closeupTarget} shot={shot} />
 
       <NightEnvironment exterior={exterior} />
       <Building layout={layout} worldState={worldState} />
@@ -129,10 +140,12 @@ function CameraDirector({
   cue,
   closeupCue,
   closeupTarget,
+  shot,
 }: {
   cue?: number;
   closeupCue?: number;
   closeupTarget?: [number, number, number];
+  shot?: number;
 }) {
   const { camera } = useThree();
   const tweening = useRef(false);
@@ -158,6 +171,17 @@ function CameraDirector({
   useEffect(() => {
     follow.current = closeupTarget ? new THREE.Vector3(...closeupTarget) : null;
   }, [closeupTarget]);
+
+  // Static shot: a hard cut to a fixed position, held until the shot changes.
+  useEffect(() => {
+    if (shot === undefined) return;
+    const s = STATIC_SHOTS[Math.max(0, Math.min(STATIC_SHOTS.length - 1, shot))];
+    tweening.current = false;
+    follow.current = null;
+    camera.position.copy(s.position);
+    camera.lookAt(s.target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot]);
 
   useEffect(() => {
     if (closeupCue === undefined || !closeupTarget) return;

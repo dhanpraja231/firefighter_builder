@@ -8,6 +8,7 @@ import { buildExteriorLayout, buildNavGraph, createBuildingLayout } from "./scen
 import { findPath, pathLength, pathWaypoints } from "./scene/nav";
 import { PlaceholderWalker } from "./scene/characters/PlaceholderWalker";
 import { DemoScene, ENGINE_ENTRY_SECONDS } from "./demo/DemoScene";
+import { STATIC_SHOTS } from "./scene/Engine9Scene";
 import { DecisionLogPanel } from "./demo/DecisionLogPanel";
 import { CaptionBar } from "./demo/CaptionBar";
 import { activeMomentAtTime, decisionLogAtTime } from "./timeline/replay";
@@ -159,6 +160,8 @@ export default function App() {
   const [worldState, setWorldState] = useState<WorldState>(demoWorldState);
   const [showDebug, setShowDebug] = useState(true);
   const [cameraCue, setCameraCue] = useState(0);
+  // ?shot=1|2|3 picks the starting camera shot (handy for recording)
+  const [shot, setShot] = useState(() => Math.max(0, Math.min(2, Number(new URLSearchParams(location.search).get("shot") ?? 1) - 1 || 0)));
   const [walkToken, setWalkToken] = useState<number | null>(null);
   const [walkInfo, setWalkInfo] = useState<string>("");
 
@@ -222,7 +225,7 @@ export default function App() {
         <SceneBackground />
         {mode === "story" ? (
           <>
-            <DemoScene events={run?.events ?? []} t={t} />
+            <DemoScene events={run?.events ?? []} t={t} shot={shot} />
             {playing && run && (
               <PlaybackClock
                 key={`${run.seed}-${run.run_number}`}
@@ -248,11 +251,12 @@ export default function App() {
             )}
           </Engine9Scene>
         )}
-        {/* Free orbit only when not playing a story run; during playback the camera director drives the shots. */}
-        <OrbitControls enabled={!(mode === "story" && playing)} target={[2, 5.5, 5]} maxPolarAngle={Math.PI * 0.49} />
+        {/* Free orbit only in the dev harness; story mode uses the three static shots. */}
+        <OrbitControls enabled={mode !== "story"} target={[2, 5.5, 5]} maxPolarAngle={Math.PI * 0.49} />
       </Canvas>
 
       <ModeToggle mode={mode} setMode={setMode} />
+      {mode === "story" && <ShotSwitcher shot={shot} setShot={setShot} />}
 
       {mode === "story" ? (
         <RunPanel
@@ -413,6 +417,34 @@ function RunPanel({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Three fixed camera shots for story playback. Keys 1, 2, 3 switch too. */
+function ShotSwitcher({ shot, setShot }: { shot: number; setShot: (n: number) => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const n = Number(e.key) - 1;
+      if (n >= 0 && n < STATIC_SHOTS.length && !(e.target instanceof HTMLInputElement)) setShot(n);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setShot]);
+  return (
+    <div style={{ position: "absolute", left: "50%", bottom: 16, transform: "translateX(-50%)", display: "flex", gap: 6,
+                  background: "rgba(10,12,18,0.82)", padding: 6, borderRadius: 8, border: "1px solid #2a2f3d" }}>
+      {STATIC_SHOTS.map((s, i) => (
+        <button
+          key={s.name}
+          onClick={() => setShot(i)}
+          style={{ padding: "6px 12px", fontSize: 12, fontFamily: "monospace", cursor: "pointer", borderRadius: 5,
+                   border: "1px solid " + (i === shot ? "#e7eefc" : "#2a2f3d"),
+                   background: i === shot ? "#e7eefc" : "#1a1d26", color: i === shot ? "#10131a" : "#e7eefc" }}
+        >
+          {i + 1} · {s.name}
+        </button>
+      ))}
     </div>
   );
 }
