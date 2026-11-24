@@ -107,13 +107,23 @@ export interface DecisionLogRow {
   type: TimelineEvent["type"];
   summary: string;
   reasoning: string | null;
+  choice?: string | null;
+  options?: string[];
+  model?: string | null;
+  latencyMs?: number | null;
+  twist?: string | null;
 }
 
 /** Rows for the decision-log panel, oldest first, up to time `t`. */
 export function decisionLogAtTime(events: TimelineEvent[], t: number): DecisionLogRow[] {
+  const p = (e: TimelineEvent) => (e.payload ?? {}) as Record<string, any>;
   return events
     .filter((e) => e.t_sim <= t)
-    .filter((e) => e.type === "decide" || e.type === "act" || e.type === "request_approval" || e.type === "approval" || e.type === "world_event")
+    .filter((e) =>
+      ((e.type === "decide" || e.type === "act" || e.type === "request_approval") && Boolean(e.reasoning)) ||
+      e.type === "approval" ||
+      (e.type === "world_event" && Boolean(p(e).twist)))
+    .sort((a, b) => a.t_sim - b.t_sim || a.seq - b.seq)
     .map((e) => ({
       seq: e.seq,
       t_sim: e.t_sim,
@@ -122,6 +132,11 @@ export function decisionLogAtTime(events: TimelineEvent[], t: number): DecisionL
       type: e.type,
       summary: summarize(e),
       reasoning: e.reasoning ?? null,
+      choice: p(e).choice ?? null,
+      options: Array.isArray(p(e).options) ? p(e).options : [],
+      model: (e as any).model ?? null,
+      latencyMs: (e as any).latency_ms ?? null,
+      twist: p(e).twist ?? null,
     }));
 }
 

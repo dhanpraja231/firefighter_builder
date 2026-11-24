@@ -18,6 +18,7 @@ import {
   windowWorldPosition,
 } from "./layout";
 import { palette } from "./palette";
+import { CityBackdrop } from "./environment/CityBackdrop";
 import { type Engine9SceneProps } from "./types";
 import { FireEngine, ladderTurntablePosition } from "./vehicles/FireEngine";
 import { Ladder } from "./vehicles/Ladder";
@@ -41,6 +42,7 @@ export const STATIC_SHOTS = [
   { name: "Wide", position: new THREE.Vector3(-24, 15, -31), target: new THREE.Vector3(2, 5.5, 5) },
   { name: "Street", position: new THREE.Vector3(-9, 2.4, -13), target: new THREE.Vector3(5, 5.5, 5) },
   { name: "Cutaway", position: new THREE.Vector3(8, 7.5, -21), target: new THREE.Vector3(8, 7, 6) },
+  { name: "West", position: new THREE.Vector3(-22, 7, 4), target: new THREE.Vector3(0, 6.5, 6) },
 ] as const;
 
 /**
@@ -105,6 +107,7 @@ export function Engine9Scene({
   return (
     <group name="engine9-scene">
       <fog attach="fog" args={[palette.fog, 48, 145]} />
+      <CityBackdrop />
       <CameraDirector cue={cameraCue} closeupCue={closeupCue} closeupTarget={closeupTarget} shot={shot} />
 
       <NightEnvironment exterior={exterior} />

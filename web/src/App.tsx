@@ -161,7 +161,7 @@ export default function App() {
   const [showDebug, setShowDebug] = useState(true);
   const [cameraCue, setCameraCue] = useState(0);
   // ?shot=1|2|3 picks the starting camera shot (handy for recording)
-  const [shot, setShot] = useState(() => Math.max(0, Math.min(2, Number(new URLSearchParams(location.search).get("shot") ?? 1) - 1 || 0)));
+  const [shot, setShot] = useState(() => Math.max(0, Math.min(STATIC_SHOTS.length - 1, Number(new URLSearchParams(location.search).get("shot") ?? 1) - 1 || 0)));
   const [walkToken, setWalkToken] = useState<number | null>(null);
   const [walkInfo, setWalkInfo] = useState<string>("");
 
@@ -181,6 +181,16 @@ export default function App() {
   const [run, setRun] = useState<RunResponse | null>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
+
+  // Recorder hook (scripts/record.mjs): load a run and step time/shot frame by frame.
+  useEffect(() => {
+    (window as any).__ff = {
+      load: (data: RunResponse) => { setRun(data); setT(0); setPlaying(false); },
+      setT: (v: number) => setT(v),
+      setShot: (n: number) => setShot(n),
+      duration: () => (window as any).__ffDuration ?? 0,
+    };
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,6 +198,7 @@ export default function App() {
     () => (run && run.events.length ? ENGINE_ENTRY_SECONDS + Math.max(...run.events.map((e) => e.t_sim)) : 0),
     [run],
   );
+  (window as any).__ffDuration = duration;
   const decisionRows = useMemo(() => (run ? decisionLogAtTime(run.events, t) : []), [run, t]);
   const activeMoment = useMemo(
     () => (run ? activeMomentAtTime(run.events, Math.max(0, t - ENGINE_ENTRY_SECONDS)) : null),

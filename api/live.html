@@ -15,6 +15,10 @@ body { background: var(--bg); color: var(--ink); font: 13px/1.4 "IBM Plex Sans",
 .bar b { font-weight: 600; }
 .bar a { color: var(--ink-3); }
 .panes { flex: 1; display: grid; grid-template-columns: var(--split, 50%) 6px minmax(0, 1fr); min-height: 0; }
+.panes.solo { grid-template-columns: 1fr; }
+.panes.solo .handle, .panes.solo .ops { display: none; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.toggle input { accent-color: var(--ink); width: 15px; height: 15px; margin: 0; }
 iframe { width: 100%; height: 100%; border: 0; background: var(--surface); }
 .handle { cursor: col-resize; background: var(--line); }
 .handle:hover { background: var(--ink-3); }
@@ -24,16 +28,26 @@ iframe { width: 100%; height: 100%; border: 0; background: var(--surface); }
 <body>
 <div class="bar">
   <b>Scene and ops</b>
-  <span style="color:var(--ink-3)">Press Play in the scene; the run shows up on the right within a few seconds.</span>
+  <label class="toggle"><input type="checkbox" id="showOps"> Show Bruin dashboard</label>
   <span style="margin-left:auto"><a href="http://localhost:5173" target="_blank" rel="noopener">open scene alone</a> · <a href="/" target="_blank" rel="noopener">open dashboard alone</a></span>
 </div>
-<div class="panes" id="panes">
+<div class="panes solo" id="panes">
   <iframe src="http://localhost:5173" title="3D scene" allow="fullscreen"></iframe>
   <div class="handle" id="handle" title="Drag to resize"></div>
-  <iframe src="/" title="Ops dashboard"></iframe>
+  <iframe class="ops" data-src="/" title="Ops dashboard"></iframe>
 </div>
 <script>
 const panes = document.getElementById("panes"), handle = document.getElementById("handle");
+const box = document.getElementById("showOps"), ops = panes.querySelector(".ops");
+function applyOps(on) {
+  panes.classList.toggle("solo", !on);
+  if (on && !ops.src) ops.src = ops.dataset.src;  // load the dashboard only when it's shown
+  try { localStorage.setItem("ff-show-ops", on ? "1" : "0"); } catch {}
+}
+let saved = false;
+try { saved = localStorage.getItem("ff-show-ops") === "1"; } catch {}
+box.checked = saved; applyOps(saved);
+box.onchange = () => applyOps(box.checked);
 handle.onpointerdown = (e) => {
   handle.setPointerCapture(e.pointerId);
   panes.querySelectorAll("iframe").forEach((f) => f.style.pointerEvents = "none");
