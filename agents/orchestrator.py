@@ -344,11 +344,34 @@ class EventLog:
 # events that agent decided on. `state` is a plain dict both read and
 # written, standing in for the observation a real LLM call would get.
 
+def _glasser_commander_note(scenario_id: str = "apartment-3f") -> str | None:
+    """Offline Glasser fixture text for Commander reasoning (no live API calls)."""
+    try:
+        from tools.glasser_briefing import load, summarize
+    except ImportError:
+        try:
+            from agents.tools.glasser_briefing import load, summarize
+        except ImportError:
+            return None
+    try:
+        # Scenario owns layout (3-floor apartment); Glasser owns age/risk only.
+        return summarize(load(scenario_id), floors=3, scenario_kind="multifamily walkup")
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+
+
 def decide_commander_open(log: EventLog, rng, state):
+    from assignments import SCOUT_ASSIGN_REASONING, SCOUT_ASSIGN_UTTERANCE
+
+    reasoning = SCOUT_ASSIGN_REASONING
+    glasser_note = _glasser_commander_note()
+    if glasser_note:
+        reasoning = f"{reasoning} {glasser_note}"
+        state["glasser_briefing"] = glasser_note
     log.decide(
         "commander", "commander",
-        {"action": "assign", "target": "scout-1", "utterance": "Scout, sweep every floor and report what you find."},
-        "Need the full picture before committing the rescue robot anywhere.",
+        {"action": "assign", "target": "scout-1", "utterance": SCOUT_ASSIGN_UTTERANCE},
+        reasoning,
     )
 
 
@@ -385,11 +408,13 @@ def decide_scout_sweep(log: EventLog, rng, state):
 
 
 def decide_commander_assign(log: EventLog, rng, state):
+    from assignments import HOSE_RESCUE_ASSIGN_REASONING, HOSE_RESCUE_ASSIGN_UTTERANCE
+
     log.decide(
         "commander", "commander",
         {"action": "assign", "target": "hose-1,rescue-1",
-         "utterance": "Hose-1, hold the floor 3 stairwell. Rescue-1, start with the easiest extracts and work up."},
-        "Fire is confirmed on 3. Buy time on the stairwell while rescue clears rooms floor by floor.",
+         "utterance": HOSE_RESCUE_ASSIGN_UTTERANCE},
+        HOSE_RESCUE_ASSIGN_REASONING,
     )
 
 

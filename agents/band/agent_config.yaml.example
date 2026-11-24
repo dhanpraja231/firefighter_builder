@@ -1,0 +1,24 @@
+# Copy to agent_config.yaml and paste IDs + API keys from app.band.ai
+# (Agents → Connect remote agent). Never commit agent_config.yaml.
+#
+# Suggested display names when creating agents:
+#   Commander  – Engine 9 IC; assigns scout, hose, rescue
+#   Scout-1    – maps rooms and finds victims
+#   Hose-1     – holds stairwell / suppression
+#   Rescue-1   – extracts victims
+
+commander:
+  agent_id: "<COMMANDER_AGENT_ID>"
+  api_key: "<COMMANDER_API_KEY>"
+
+scout:
+  agent_id: "<SCOUT_AGENT_ID>"
+  api_key: "<SCOUT_API_KEY>"
+
+hose:
+  agent_id: "<HOSE_AGENT_ID>"
+  api_key: "<HOSE_API_KEY>"
+
+rescue:
+  agent_id: "<RESCUE_AGENT_ID>"
+  api_key: "<RESCUE_API_KEY>"
