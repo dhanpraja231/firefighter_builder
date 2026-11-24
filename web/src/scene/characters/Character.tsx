@@ -1,16 +1,23 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
+import { createFirefighter, createPerson, type FirefighterRig, type PersonRig } from "./models";
+import { RUN, groundSpeed } from "./runCycle.js";
 
 export type CharacterKind = "robot" | "victim";
 
 export interface CharacterVisual {
   label: string;
   kind: CharacterKind;
-  /** Accent color: robot chassis panel, or victim's clothing. */
+  /** Accent color: name tag and the robot's tint. */
   color: string;
+  /** Real-world height in meters the body is scaled to. */
   height?: number;
+  /** Victims: Rocketbox model file in `public/people/` (no extension). */
+  model?: string;
+  /** Victims: walk clip to use from that model; defaults to its neutral walk. */
+  walkClip?: string;
 }
 
 /**
@@ -19,11 +26,10 @@ export interface CharacterVisual {
  * from the event log and passes them in, the same contract INTEGRATION.md
  * describes for `PlaceholderWalker`. Mount as a child of `<Engine9Scene>`.
  *
- * No external model: articulated procedural limbs with a sine-driven walk
- * cycle. A real rigged asset (the `character` branch's MMD firefighter) was
- * tried first -- its loader only supports three@0.84.x against our 0.180.0,
- * a six-major-version gap npm itself refused to resolve, so it was dropped
- * rather than risk breaking a working scene on an unverifiable loader.
+ * Bodies are the `runcycle/` characters: robots are the firefighter PMX with
+ * its procedural run cycle and leg IK, victims are Rocketbox mocap people.
+ * The MMD loader was removed from three in r172, so a copy from r171 is
+ * vendored in `./mmd/`.
  */
 export function Character({
   position,
@@ -40,15 +46,21 @@ export function Character({
   dimmed?: boolean;
   moving?: boolean;
 }) {
-  const height = visual.height ?? (visual.kind === "robot" ? 1.2 : 1.6);
-  const opacity = dimmed ? 0.35 : 1;
+  const height = visual.height ?? (visual.kind === "robot" ? 1.8 : 1.7);
   const speaking = Boolean(utterance);
   return (
     <group position={position} rotation={[0, heading, 0]} name={`char-${visual.label}`}>
       {visual.kind === "robot" ? (
-        <RobotBody color={visual.color} height={height} opacity={opacity} moving={moving} />
+        <FirefighterBody height={height} color={visual.color} dimmed={dimmed} moving={moving} position={position} />
       ) : (
-        <VictimBody color={visual.color} height={height} opacity={opacity} moving={moving} />
+        <PersonBody
+          file={visual.model ?? "Female_Adult_02"}
+          walkClip={visual.walkClip}
+          height={height}
+          dimmed={dimmed}
+          moving={moving}
+          position={position}
+        />
       )}
       {/* Name tag only. Dialogue goes to the fixed caption bar instead of an in-world bubble:
           at this camera distance bubbles wrapped to a few characters per line and overlapped
@@ -60,113 +72,207 @@ export function Character({
   );
 }
 
-function RobotBody({ color, height, opacity, moving }: { color: string; height: number; opacity: number; moving: boolean }) {
-  const bodyH = height * 0.62;
-  const headH = height * 0.24;
-  const bob = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    const g = bob.current;
-    if (!g) return;
-    const target = moving ? Math.abs(Math.sin(clock.elapsedTime * 7)) * 0.06 : 0;
-    g.position.y = THREE.MathUtils.damp(g.position.y, target, 8, 0.016);
-    g.rotation.z = moving ? Math.sin(clock.elapsedTime * 7) * 0.04 : THREE.MathUtils.damp(g.rotation.z, 0, 8, 0.016);
+// ---------------------------------------------------------------- helpers
+
+/** Horizontal speed (m/s) of `position` between frames, smoothed. */
+function useGroundSpeed(position: [number, number, number]) {
+  const last = useRef<THREE.Vector3 | null>(null);
+  const speed = useRef(0);
+  return (delta: number) => {
+    const p = new THREE.Vector3(position[0], 0, position[2]);
+    if (last.current && delta > 0) {
+      const v = p.distanceTo(last.current) / delta;
+      // ignore teleports (timeline scrubbing) and damp the rest
+      if (v < 15) speed.current = THREE.MathUtils.damp(speed.current, v, 6, delta);
+    }
+    last.current = p;
+    return speed.current;
+  };
+}
+
+/** Fade every material on `root` in or out for rescued/lost characters. */
+function applyDim(root: THREE.Object3D, dimmed: boolean | undefined) {
+  const opacity = dimmed ? 0.35 : 1;
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const mat = m as THREE.Material & { userData: { baseOpacity?: number; baseTransparent?: boolean } };
+      mat.userData.baseOpacity ??= mat.opacity;
+      mat.userData.baseTransparent ??= mat.transparent;
+      mat.opacity = mat.userData.baseOpacity * opacity;
+      mat.transparent = dimmed ? true : mat.userData.baseTransparent;
+    }
   });
+}
+
+const _p = new THREE.Vector3();
+/** Lowest of `bones`, in `model`'s parent space (before the model's own offset). */
+function lowestY(bones: THREE.Object3D[], model: THREE.Object3D): number {
+  model.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(model.matrixWorld).invert();
+  let min = Infinity;
+  for (const b of bones) {
+    _p.setFromMatrixPosition(b.matrixWorld).applyMatrix4(inv);
+    min = Math.min(min, _p.y);
+  }
+  return min * model.scale.y + model.position.y;
+}
+
+/** Clone every material on `root` so per-character tint/dimming doesn't leak to others. */
+function ownMaterials(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map((m) => m.clone()) : mesh.material.clone();
+  });
+}
+
+// ---------------------------------------------------------------- robot
+
+const FF_RUN_MPS_AT_1X = groundSpeed(RUN); // MMD units/s, converted in the rig
+
+function FirefighterBody({
+  height,
+  color,
+  dimmed,
+  moving,
+  position,
+}: {
+  height: number;
+  color: string;
+  dimmed?: boolean;
+  moving: boolean;
+  position: [number, number, number];
+}) {
+  const [rig, setRig] = useState<FirefighterRig | null>(null);
+  const holder = useRef<THREE.Group>(null);
+  const measure = useGroundSpeed(position);
+
+  useEffect(() => {
+    let alive = true;
+    createFirefighter(FF_RUN_MPS_AT_1X).then((r) => {
+      if (!alive) return;
+      ownMaterials(r.mesh);
+      // light tint so the four robot roles are tellable apart
+      const tint = new THREE.Color(color);
+      r.mesh.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          const c = (m as THREE.MeshPhongMaterial).color;
+          if (c) c.lerp(tint, 0.18);
+        }
+      });
+      setRig(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [color]);
+
+  useEffect(() => {
+    if (rig) applyDim(rig.mesh, dimmed);
+  }, [rig, dimmed]);
+
+  useFrame((_, delta) => {
+    if (!rig) return;
+    const v = measure(delta);
+    // Play the run cycle at the rate that matches actual ground speed (feet don't slide);
+    // when standing, freeze on a mid-stance frame instead of running in place.
+    const rate = moving && v > 0.05 ? v / (rig.runSpeed * (height / 1.8)) : 0;
+    rig.action.paused = rate === 0;
+    rig.helper.update(Math.min(delta, 0.1) * rate);
+  });
+
+  if (!rig) return null;
+  const s = rig.scale * (height / 1.8);
   return (
-    <group ref={bob}>
-      <mesh position={[0, bodyH / 2, 0]} castShadow>
-        <boxGeometry args={[0.46, bodyH, 0.34]} />
-        <meshLambertMaterial color="#aab2bd" transparent opacity={opacity} />
-      </mesh>
-      <mesh position={[0, bodyH / 2, 0.175]} castShadow>
-        <boxGeometry args={[0.3, bodyH * 0.6, 0.02]} />
-        <meshLambertMaterial color={color} transparent opacity={opacity} />
-      </mesh>
-      <mesh position={[0, bodyH + headH / 2, 0]} castShadow>
-        <boxGeometry args={[0.3, headH, 0.28]} />
-        <meshLambertMaterial color="#7d8591" transparent opacity={opacity} />
-      </mesh>
-      <mesh position={[0, bodyH + headH / 2, 0.15]}>
-        <boxGeometry args={[0.2, 0.06, 0.02]} />
-        <meshBasicMaterial color={color} toneMapped={false} transparent opacity={opacity} />
-      </mesh>
-      {[-0.14, 0.14].map((x) => (
-        <mesh key={x} position={[x, bodyH * 0.12, 0]} castShadow>
-          <boxGeometry args={[0.08, bodyH * 0.3, 0.1]} />
-          <meshLambertMaterial color="#5c636e" transparent opacity={opacity} />
-        </mesh>
-      ))}
-      <pointLight position={[0, bodyH + headH, 0]} intensity={0.5} distance={2.2} color={color} />
+    <group ref={holder} scale={s}>
+      <primitive object={rig.mesh} />
     </group>
   );
 }
 
-const LEG_SWING = 0.55;
-const ARM_SWING = 0.4;
-const WALK_SPEED = 7;
+// ---------------------------------------------------------------- victim
 
-function VictimBody({ color, height, opacity, moving }: { color: string; height: number; opacity: number; moving: boolean }) {
-  const legLen = height * 0.46;
-  const torsoLen = height * 0.34;
-  const headR = height * 0.085;
-  const hipY = legLen;
-  const shoulderY = hipY + torsoLen * 0.92;
+const FADE = 0.25; // seconds to cross-fade idle <-> walk
 
-  const legL = useRef<THREE.Group>(null);
-  const legR = useRef<THREE.Group>(null);
-  const armL = useRef<THREE.Group>(null);
-  const armR = useRef<THREE.Group>(null);
+function PersonBody({
+  file,
+  walkClip,
+  height,
+  dimmed,
+  moving,
+  position,
+}: {
+  file: string;
+  walkClip?: string;
+  height: number;
+  dimmed?: boolean;
+  moving: boolean;
+  position: [number, number, number];
+}) {
+  const [rig, setRig] = useState<PersonRig | null>(null);
+  const [baseHeight, setBaseHeight] = useState(1.75);
+  const measure = useGroundSpeed(position);
+  const walkWeight = useRef(0);
+  const feet = useRef<THREE.Object3D[]>([]);
+  const restFootY = useRef(0);
 
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime * WALK_SPEED;
-    const legSwing = moving ? Math.sin(t) * LEG_SWING : 0;
-    const armSwing = moving ? Math.sin(t + Math.PI) * ARM_SWING : 0;
-    for (const [ref, v] of [
-      [legL, legSwing],
-      [legR, -legSwing],
-      [armL, armSwing],
-      [armR, -armSwing],
-    ] as const) {
-      if (ref.current) ref.current.rotation.x = THREE.MathUtils.damp(ref.current.rotation.x, v, 10, 0.016);
+  useEffect(() => {
+    let alive = true;
+    createPerson(file, walkClip).then((r) => {
+      if (!alive) return;
+      ownMaterials(r.model);
+      r.model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(r.model);
+      setBaseHeight(box.max.y - box.min.y || 1.75);
+      // foot bones + their bind-pose height, for per-frame grounding
+      feet.current = [];
+      r.model.traverse((o) => {
+        if ((o as THREE.Bone).isBone && /_[LR]_(Foot|Toe0)$/.test(o.name)) feet.current.push(o);
+      });
+      restFootY.current = lowestY(feet.current, r.model);
+      r.mixer.setTime(Math.random() * 2); // desync identical clips
+      setRig(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [file, walkClip]);
+
+  useEffect(() => {
+    if (rig) applyDim(rig.model, dimmed);
+  }, [rig, dimmed]);
+
+  useFrame((_, delta) => {
+    if (!rig) return;
+    const dt = Math.min(delta, 0.1);
+    const v = measure(delta);
+    const scale = height / baseHeight;
+    const walking = moving && v > 0.05;
+    walkWeight.current = THREE.MathUtils.clamp(walkWeight.current + (walking ? dt : -dt) / FADE, 0, 1);
+    rig.walk.weight = walkWeight.current;
+    rig.idle.weight = 1 - walkWeight.current;
+    // Walk clip speed follows actual ground speed so the steps match the distance covered.
+    rig.walk.timeScale = walking ? THREE.MathUtils.clamp(v / (rig.walkSpeed * scale), 0.3, 2.5) : 1;
+    rig.mixer.update(dt);
+    // Grounding: clips retargeted from a different avatar (the child uses adult clips)
+    // can leave the feet above or below the floor. Shift so the lowest foot bone sits at
+    // its bind-pose height, as runcycle/main.js does.
+    if (feet.current.length) {
+      rig.model.position.y = 0;
+      rig.model.updateMatrixWorld(true);
+      rig.model.position.y = restFootY.current - lowestY(feet.current, rig.model);
     }
   });
 
-  const limb = (len: number, radius: number) => (
-    <mesh position={[0, -len / 2, 0]} castShadow>
-      <capsuleGeometry args={[radius, len * 0.65, 4, 8]} />
-      <meshLambertMaterial color={color} transparent opacity={opacity} />
-    </mesh>
-  );
-
+  if (!rig) return null;
   return (
-    <group>
-      {/* legs, pivoting at the hip */}
-      {[
-        [legL, -0.1],
-        [legR, 0.1],
-      ].map(([ref, x], i) => (
-        <group key={i} ref={ref as React.RefObject<THREE.Group>} position={[x as number, hipY, 0]}>
-          {limb(legLen * 0.95, 0.09)}
-        </group>
-      ))}
-      {/* torso */}
-      <mesh position={[0, hipY + torsoLen / 2, 0]} castShadow>
-        <capsuleGeometry args={[0.19, torsoLen * 0.6, 4, 8]} />
-        <meshLambertMaterial color={color} transparent opacity={opacity} />
-      </mesh>
-      {/* arms, pivoting at the shoulder */}
-      {[
-        [armL, -0.26],
-        [armR, 0.26],
-      ].map(([ref, x], i) => (
-        <group key={i} ref={ref as React.RefObject<THREE.Group>} position={[x as number, shoulderY, 0]}>
-          {limb(torsoLen * 0.85, 0.06)}
-        </group>
-      ))}
-      {/* head */}
-      <mesh position={[0, shoulderY + headR * 1.3, 0]} castShadow>
-        <sphereGeometry args={[headR, 12, 12]} />
-        <meshLambertMaterial color="#e3b48c" transparent opacity={opacity} />
-      </mesh>
+    <group scale={height / baseHeight}>
+      <primitive object={rig.model} />
     </group>
   );
 }
