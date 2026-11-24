@@ -41,10 +41,13 @@ interface RunResponse {
 
 function demoWorldState(): WorldState {
   const state = createDefaultWorldState();
-  state.fires[DEMO_FIRE_ROOM] = 0.85;
+  state.fires[DEMO_FIRE_ROOM] = 0.55;
   state.smoke[DEMO_SMOKE_ROOM] = 0.45;
-  state.doors[DEMO_DOOR] = 0.6;
-  state.doors["2-door-kitchen-hall"] = 0.3;
+  state.doors[DEMO_DOOR] = 0.85;
+  state.doors["2-door-kitchen-hall"] = 0.7;
+  state.doors["2-door-living-hall"] = 0.6;
+  state.doors["2-door-living-bed"] = 0.5;
+  state.doors["2-door-kitchen-bed"] = 0.4;
   state.ladder = { deployed: 0.85, targetWindowId: DEMO_WINDOW };
   state.hose = { active: false, targetWindowId: DEMO_WINDOW };
   return state;
@@ -55,11 +58,68 @@ function SceneBackground() {
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls);
   useEffect(() => {
-    scene.background = new THREE.Color("#05070d");
+    // Match the night-sky dome horizon so gaps around the sphere aren't a black void.
+    scene.background = new THREE.Color("#152038");
     // Exposed for debugging the camera framing from the console.
     (window as unknown as { __scene: unknown }).__scene = { scene, camera, controls };
   }, [scene, camera, controls]);
   return null;
+}
+
+/** Client-side preview of room-to-room fire growth for the dev harness. */
+function FireSpreadTicker({
+  active,
+  onTick,
+}: {
+  active: boolean;
+  onTick: (updater: (state: WorldState) => WorldState) => void;
+}) {
+  const acc = useRef(0);
+  useFrame((_, delta) => {
+    if (!active) return;
+    acc.current += delta;
+    if (acc.current < 0.9) return;
+    acc.current = 0;
+    onTick((state) => spreadHarnessFire(state));
+  });
+  return null;
+}
+
+const HARNESS_FIRE_ADJ: Record<string, string[]> = {
+  "2-kitchen": ["2-hall", "2-bedroom-e"],
+  "2-hall": ["2-kitchen", "2-living", "1-hall", "3-hall"],
+  "2-living": ["2-hall", "2-bedroom-w"],
+  "2-bedroom-w": ["2-living", "2-landing"],
+  "2-bedroom-e": ["2-kitchen", "2-landing"],
+  "2-landing": ["2-bedroom-w", "2-bedroom-e"],
+  "1-hall": ["2-hall"],
+  "3-hall": ["2-hall", "3-kitchen", "3-living"],
+  "3-kitchen": ["3-hall"],
+  "3-living": ["3-hall"],
+};
+
+function spreadHarnessFire(state: WorldState): WorldState {
+  const fires = { ...state.fires };
+  const smoke = { ...state.smoke };
+  let changed = false;
+  for (const [roomId, intensity] of Object.entries(fires)) {
+    if (intensity < 0.08) continue;
+    if (intensity < 0.95) {
+      fires[roomId] = Math.min(1, intensity + 0.04);
+      changed = true;
+    }
+    smoke[roomId] = Math.max(smoke[roomId] ?? 0, Math.min(1, intensity * 0.85 + 0.1));
+    if (intensity < 0.35) continue;
+    for (const neighbor of HARNESS_FIRE_ADJ[roomId] ?? []) {
+      const next = fires[neighbor] ?? 0;
+      if (next < intensity * 0.55) {
+        fires[neighbor] = Math.min(1, next + 0.08);
+        smoke[neighbor] = Math.max(smoke[neighbor] ?? 0, Math.min(1, (smoke[neighbor] ?? 0) + 0.12));
+        changed = true;
+      }
+    }
+  }
+  return changed ? { ...state, fires, smoke } : state;
 }
 
 /** Advances `t` while mounted. Keyed by the caller on (seed, run_number) so a new run always starts a fresh clock. */
@@ -151,13 +211,13 @@ export default function App() {
   };
 
   return (
-    <div style={{ width: "100vw", height: "100vh", background: "#05070d" }}>
+    <div style={{ width: "100vw", height: "100vh", background: "#152038" }}>
       {/* ACESFilmic rolls highlights off instead of clipping them to white, which matters with
           bright practical lights in every room; exposure is raised so interiors still read warm. */}
       <Canvas
         shadows
         camera={{ position: [-24, 15, -31], fov: 45, near: 0.1, far: 200 }}
-        gl={{ toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15 }}
+        gl={{ toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
       >
         <SceneBackground />
         {mode === "story" ? (
@@ -175,6 +235,10 @@ export default function App() {
           </>
         ) : (
           <Engine9Scene worldState={worldState} cameraCue={cameraCue} showDebugMarkers={showDebug}>
+            <FireSpreadTicker
+              active={(worldState.fires[DEMO_FIRE_ROOM] ?? 0) > 0.01}
+              onTick={setWorldState}
+            />
             {walkWaypoints && (
               <PlaceholderWalker
                 key={walkToken}
@@ -421,11 +485,15 @@ function HarnessPanel({
     <div style={panelStyle}>
       <div style={{ marginBottom: 8, opacity: 0.8 }}>Engine 9 — dev harness</div>
 
-      {button(`Fire floor 2: ${fireOn ? "ON" : "off"}`, () =>
+      {button(`Fire floor 2: ${fireOn ? "ON (spreading)" : "off"}`, () =>
         setWorldState((state) => ({
           ...state,
-          fires: { ...state.fires, [DEMO_FIRE_ROOM]: fireOn ? 0 : 0.85 },
-          smoke: { ...state.smoke, [DEMO_SMOKE_ROOM]: fireOn ? 0.1 : 0.45 },
+          fires: fireOn
+            ? {}
+            : { [DEMO_FIRE_ROOM]: 0.55 },
+          smoke: fireOn
+            ? {}
+            : { [DEMO_SMOKE_ROOM]: 0.35, [DEMO_FIRE_ROOM]: 0.25 },
         })),
         fireOn,
       )}

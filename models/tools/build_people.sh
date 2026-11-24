@@ -9,6 +9,7 @@ CACHE=${ROCKETBOX_CACHE:-/tmp/rocketbox}
 BLENDER=${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}
 RAW=https://raw.githubusercontent.com/microsoft/Microsoft-Rocketbox/master/Assets
 ANIM=$RAW/Animations/all_animations_max_motextr_xy
+IDLE=$RAW/Animations/all_animations_max_motextr_static
 mkdir -p $OUT $CACHE/anim
 
 fetch() { [[ -s $2 ]] || curl -sfL -o $2 $1; }
@@ -19,10 +20,14 @@ build() {
   local av=$CACHE/$name; mkdir -p $av/Textures
   fetch $RAW/Avatars/$dir/Export/$name.fbx $av/$name.fbx
   for t in body_color body_normal head_color head_normal opacity_color; do
-    fetch $RAW/Avatars/$dir/Textures/${tex}_$t.tga $av/Textures/${tex}_$t.tga
+    # not every avatar has every map (children have no opacity texture)
+    fetch $RAW/Avatars/$dir/Textures/${tex}_$t.tga $av/Textures/${tex}_$t.tga || rm -f $av/Textures/${tex}_$t.tga
   done
   local anims=()
   for a in $@; do fetch $ANIM/$a.max.fbx $CACHE/anim/$a.fbx; anims+=$CACHE/anim/$a.fbx; done
+  # every model also gets a standing idle (from the no-root-motion folder)
+  local idle=${2%%/*}; [[ $name == F* || $name == Business_F* ]] && idle=f_idle_neutral_01 || idle=m_idle_neutral_01
+  fetch $IDLE/$idle.max.fbx $CACHE/anim/$idle.fbx; anims+=$CACHE/anim/$idle.fbx
   $BLENDER -b --factory-startup -P $HERE/build_rocketbox.py -- $av/$name.fbx $av/Textures $OUT/$name.glb $anims \
     2>&1 | grep -E '^(clips|wrote)|Error|Traceback'
 }
@@ -33,3 +38,8 @@ build Female_Adult_02    Adults/Female_Adult_02          f002 f_walk_injured f_r
 build Business_Male_01   Professions/Business_Male_01    m005 m_walk_neutral m_run_slow_01 m_run_neutral
 build Male_Adult_02      Adults/Male_Adult_02            m003 m_walk_neutral m_run_neutral
 build Business_Female_01 Professions/Business_Female_01  f014 f_walk_neutral f_run_neutral
+# children have no clips of their own; the adult clips retarget onto the same Biped rig
+build Male_Child_01      Children/Male_Child_01          cm001 m_walk_neutral m_run_neutral
+# extra adults so every victim persona in story/characters.md has its own body
+build Female_Adult_03    Adults/Female_Adult_03          f003 f_walk_neutral f_run_neutral
+build Male_Adult_03      Adults/Male_Adult_03            m004 m_walk_neutral m_run_neutral

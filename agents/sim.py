@@ -95,7 +95,8 @@ def build_graph():
 
 
 class World:
-    def __init__(self, seed, decide, lessons_by_role, history_line, log, pos, ext):
+    def __init__(self, seed, decide, lessons_by_role, history_line, log, pos, ext, stairs=None):
+        self.stairs = stairs  # orchestrator._stair_climb: waypoints along the switchback between two floors
         self.rng = random.Random(seed)
         self.decide = decide
         self.lessons = lessons_by_role
@@ -146,6 +147,18 @@ class World:
         while p[-1] != a:
             p.append(prev[p[-1]])
         return list(reversed(p)), dist[b]
+
+    def walk_stairs(self, a, b, step, agents):
+        """Emit move waypoints along the visible stair flight for a hall-to-hall edge, spread over its travel time."""
+        if not self.stairs or EXIT in (a, b) or kind_of(a) != "hall" or kind_of(b) != "hall" or floor_of(a) == floor_of(b):
+            return
+        pts = self.stairs(min(floor_of(a), floor_of(b)))
+        if floor_of(b) < floor_of(a):
+            pts = list(reversed(pts))
+        for i, pt in enumerate(pts):
+            for agent_id, role in agents:
+                self.log._push(agent_id, role, "move", {"position": pt}, None, llm=False, dt=0)
+                self.log.events[-1]["t_sim"] = round(self.t + step * (i + 1) / (len(pts) + 1), 1)
 
     # ---------- fire, smoke, air ----------
     def step_fire(self):
@@ -343,7 +356,10 @@ class World:
                     self.log.status(m, "moving", "ladder", dt=0)
         else:
             p, _ = self.path(self.robot["at"], u["room"])
-            self.robot["task"] = {"unit": uid, "phase": "to", "path": p[1:], "next_t": self.t + self.g[p[0]][p[1]] if len(p) > 1 else self.t}
+            first = self.g[p[0]][p[1]] if len(p) > 1 else 0
+            if len(p) > 1:
+                self.walk_stairs(p[0], p[1], first, [("rescue-1", "rescue")])
+            self.robot["task"] = {"unit": uid, "phase": "to", "path": p[1:], "next_t": self.t + first}
 
     def apply_hose(self, req, out):
         _, _, _, opts, _ = req
@@ -371,6 +387,9 @@ class World:
             if ok:
                 self.log.act("hose-1", "suppression", "vent", rid(f, "hall"), "Operator approved, venting.", risky=True,
                              extra={"approval_of_seq": seq}, dt=0)
+                self.log.world({"type": "door", "doorId": f"{f}-door-kitchen-hall", "openness": 0.9}, None, dt=0)
+                self.log.world({"type": "window", "windowId": f"{f}-window-living-w", "broken": True},
+                               f"West window on floor {f} broken to let the smoke out.", dt=0)
                 for k in KINDS:
                     self.smoke[rid(f, k)] *= 0.3
                 if self.rng.random() < 0.3:
@@ -441,6 +460,9 @@ class World:
                         return
                     task["path"] = p[1:]
                     step = self.g[nxt][task["path"][0]]
+                walkers = [("rescue-1", "rescue")] + ([(m, "victim") for m in u["members"] if m not in u["lost"]]
+                                                      if task["phase"] == "back" else [])
+                self.walk_stairs(nxt, task["path"][0], step, walkers)
                 task["next_t"] = self.t + step
                 return
         if task["phase"] in ("to", "back"):
@@ -551,7 +573,7 @@ class World:
         return out
 
 
-def run(seed, decide, lessons_by_role, history_line, log, pos, ext):
-    w = World(seed, decide, lessons_by_role, history_line, log, pos, ext)
+def run(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs=None):
+    w = World(seed, decide, lessons_by_role, history_line, log, pos, ext, stairs)
     outcomes = w.run()
     return outcomes, w.decisions, w.t

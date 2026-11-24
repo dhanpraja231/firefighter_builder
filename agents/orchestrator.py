@@ -22,6 +22,7 @@ from pathlib import Path
 MODEL = "rule-based-v0"  # replaced per event by the Runware model when --llm / llm.enabled() (agents/llm.py)
 
 FLOOR_Y = {1: 0.0, 2: 3.0, 3: 6.0, 4: 9.0, 5: 12.0}
+FLOOR_HEIGHT = 3.0
 
 # Room centers, local to each floor. Mirrors web/src/scene/layout.ts exactly
 # (BUILDING_WIDTH=16, BUILDING_DEPTH=12, CROSS_Z=6.15, STAIR_CORE x=6..10 z=3.85..8.6)
@@ -39,6 +40,28 @@ EXTERIOR = {
     "command": (-8.0, 0.0, 3.5),
     "hydrant": (-1.21, 0.0, 1.4),
     "entry": (-0.05, 0.0, 1.9),
+    "sidewalk": (-2.1, 0.0, 6.0),
+}
+
+
+# Same-floor door graph (mirrors layout.ts doorsFor).
+ROOM_ADJ = {
+    "living": ["hall", "bedroom-w"],
+    "bedroom-w": ["living", "landing"],
+    "landing": ["bedroom-w", "bedroom-e"],
+    "bedroom-e": ["landing", "kitchen"],
+    "kitchen": ["hall", "bedroom-e"],
+    "hall": ["living", "kitchen"],
+}
+
+# Rooms that catch fire from a neighbor once intensity is high enough.
+FIRE_ADJ = {
+    "kitchen": ["hall", "bedroom-e"],
+    "hall": ["kitchen", "living"],
+    "living": ["hall", "bedroom-w"],
+    "bedroom-w": ["living", "landing"],
+    "bedroom-e": ["kitchen", "landing"],
+    "landing": ["bedroom-w", "bedroom-e"],
 }
 
 
@@ -54,6 +77,168 @@ def ext(name: str) -> dict:
 
 def room_id(floor: int, kind: str) -> str:
     return f"{floor}-{kind}"
+
+
+def _bfs_rooms(start: str, goal: str) -> list[str]:
+    if start == goal:
+        return [start]
+    queue = [start]
+    prev = {start: None}
+    while queue:
+        cur = queue.pop(0)
+        for nxt in ROOM_ADJ.get(cur, []):
+            if nxt in prev:
+                continue
+            prev[nxt] = cur
+            if nxt == goal:
+                path = [goal]
+                while path[-1] != start:
+                    path.append(prev[path[-1]])
+                return list(reversed(path))
+            queue.append(nxt)
+    return [start, goal]
+
+
+def _stair_climb(from_floor: int) -> list[dict]:
+    """Waypoints along the switchback between from_floor and from_floor+1."""
+    y0 = FLOOR_Y[from_floor]
+    return [
+        {"x": 7.0, "y": y0 + 0.05, "z": 4.2, "floor": from_floor - 1},
+        {"x": 7.0, "y": y0 + 0.75, "z": 5.8, "floor": from_floor - 1},
+        {"x": 8.0, "y": y0 + FLOOR_HEIGHT / 2, "z": 7.95, "floor": from_floor - 1},
+        {"x": 9.0, "y": y0 + 2.25, "z": 5.8, "floor": from_floor},
+        {"x": 9.0, "y": y0 + FLOOR_HEIGHT - 0.05, "z": 4.2, "floor": from_floor},
+    ]
+
+
+def route_positions(origin, destination) -> list[dict]:
+    """World positions from origin -> destination via halls and stairs.
+
+    Locations are either ("ext", name) or (floor:int, kind:str).
+    """
+    if origin == destination:
+        return []
+
+    points: list[dict] = []
+
+    def emit_same_floor(floor: int, a: str, b: str):
+        for kind in _bfs_rooms(a, b)[1:]:
+            points.append(pos(floor, kind))
+
+    # Normalize: step onto floor 1 hall if starting outside.
+    if origin[0] == "ext":
+        if origin[1] != "entry":
+            if origin[1] == "engine":
+                points.append(ext("sidewalk"))
+            points.append(ext("entry"))
+        points.append(pos(1, "hall"))
+        cur_floor, cur_kind = 1, "hall"
+    else:
+        cur_floor, cur_kind = origin
+
+    if destination[0] == "ext":
+        # Walk to floor-1 hall, then out.
+        if cur_floor != 1 or cur_kind != "hall":
+            if cur_kind != "hall":
+                emit_same_floor(cur_floor, cur_kind, "hall")
+                cur_kind = "hall"
+            step = 1 if 1 > cur_floor else -1
+            while cur_floor != 1:
+                nxt = cur_floor + step
+                if step > 0:
+                    points.extend(_stair_climb(cur_floor))
+                else:
+                    points.extend(reversed(_stair_climb(nxt)))
+                cur_floor = nxt
+                points.append(pos(cur_floor, "hall"))
+            cur_kind = "hall"
+        points.append(ext("entry"))
+        if destination[1] != "entry":
+            if destination[1] == "engine":
+                points.append(ext("sidewalk"))
+            points.append(ext(destination[1]))
+        return points
+
+    dest_floor, dest_kind = destination
+
+    if cur_kind != "hall" and cur_floor != dest_floor:
+        emit_same_floor(cur_floor, cur_kind, "hall")
+        cur_kind = "hall"
+    elif cur_floor == dest_floor:
+        emit_same_floor(cur_floor, cur_kind, dest_kind)
+        return points
+
+    step = 1 if dest_floor > cur_floor else -1
+    while cur_floor != dest_floor:
+        nxt = cur_floor + step
+        if step > 0:
+            points.extend(_stair_climb(cur_floor))
+        else:
+            points.extend(list(reversed(_stair_climb(nxt))))
+        cur_floor = nxt
+        points.append(pos(cur_floor, "hall"))
+        cur_kind = "hall"
+
+    if dest_kind != "hall":
+        emit_same_floor(cur_floor, "hall", dest_kind)
+    return points
+
+
+def walk_to(log: "EventLog", agent_id: str, role: str, state: dict, destination, dt_per_hop: float = 0.7):
+    """Emit move events along a stair-aware route; track agent location in state['at']."""
+    origin = state.setdefault("at", {}).get(agent_id, ("ext", "engine"))
+    for point in route_positions(origin, destination):
+        log.move(agent_id, role, point, dt=dt_per_hop)
+    state["at"][agent_id] = destination
+
+
+def emit_fire_stage(log: "EventLog", stage: int, vent_approved: bool | None = None):
+    """Progressive fire/smoke across rooms. Scene only renders what we emit."""
+    if stage == 0:
+        log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.28},
+                   "Grease fire starts on the stove.", dt=0.0)
+        log.world({"type": "smoke", "roomId": room_id(3, "hall"), "intensity": 0.2},
+                   "Smoke reaches the hall first.")
+        log.world({"type": "door", "doorId": "3-door-kitchen-hall", "openness": 0.15},
+                   "Kitchen door ajar — heat already leaking into the hall.", dt=0.1)
+    elif stage == 1:
+        log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.55},
+                   "Kitchen fire climbing; cabinets involved.")
+        log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.22},
+                   "Fire pushes into the hall toward the stair core.")
+        log.world({"type": "smoke", "roomId": room_id(3, "hall"), "intensity": 0.45},
+                   "Hall smoke thickens.")
+        log.world({"type": "smoke", "roomId": room_id(3, "living"), "intensity": 0.25},
+                   "Smoke drifts into the living room.", dt=0.2)
+    elif stage == 2:
+        intensity = 0.35 if vent_approved else 0.7
+        log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": intensity + 0.15},
+                   "Origin still burning after hose contact.")
+        log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.18 if vent_approved else 0.4},
+                   "Stair-adjacent hall still hot.")
+        log.world({"type": "smoke", "roomId": room_id(3, "bedroom-w"), "intensity": 0.3},
+                   "Smoke reaches the skeptic's bedroom.")
+        log.world({"type": "smoke", "roomId": room_id(4, "hall"), "intensity": 0.25},
+                   "Heat column drives smoke up the stairwell to floor 4.", dt=0.2)
+    elif stage == 3:
+        if vent_approved:
+            log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.25},
+                       "Venting and water knocked the kitchen back.")
+            log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.08},
+                       "Hall fire nearly out.")
+            log.world({"type": "smoke", "roomId": room_id(4, "landing"), "intensity": 0.2},
+                       "Residual smoke upstairs.", dt=0.2)
+        else:
+            log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.85},
+                       "Sealed kitchen flashover risk.")
+            log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.55},
+                       "Hall fully involved; stairs threatened.")
+            log.world({"type": "fire", "roomId": room_id(3, "bedroom-e"), "intensity": 0.3},
+                       "Fire spreads east into the bedroom.")
+            log.world({"type": "smoke", "roomId": room_id(4, "hall"), "intensity": 0.5},
+                       "Floor 4 hall filling — family is next on the path.")
+            log.world({"type": "smoke", "roomId": room_id(4, "landing"), "intensity": 0.35},
+                       "Landing smoke cuts the north exit.", dt=0.2)
 
 
 PERSONAS_DIR = Path(__file__).parent / "personas"
@@ -174,7 +359,7 @@ def build_run(seed: int, memory: dict | None = None, use_llm: bool | None = None
 
     log = EventLog()
     log.rng = random.Random(seed)
-    outcomes, decisions, end_t = sim.run(seed, decide, lessons, history, log, pos, ext)
+    outcomes, decisions, end_t = sim.run(seed, decide, lessons, history, log, pos, ext, stairs=_stair_climb)
     twists = sorted({e["payload"]["twist"] for e in log.events if (e["payload"] or {}).get("twist")})
     saved = sum(1 for st, _ in outcomes.values() if st == "rescued")
     log.t = float(end_t)
