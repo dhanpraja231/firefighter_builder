@@ -26,6 +26,7 @@ from pathlib import Path
 MODEL = "rule-based-v0"  # swap for "openai.gpt-oss-120b-1:0" (Bedrock) once creds exist
 
 FLOOR_Y = {1: 0.0, 2: 3.0, 3: 6.0, 4: 9.0, 5: 12.0}
+FLOOR_HEIGHT = 3.0
 
 # Room centers, local to each floor. Mirrors web/src/scene/layout.ts exactly
 # (BUILDING_WIDTH=16, BUILDING_DEPTH=12, CROSS_Z=6.15, STAIR_CORE x=6..10 z=3.85..8.6)
@@ -43,6 +44,27 @@ EXTERIOR = {
     "command": (-8.0, 0.0, 3.5),
     "hydrant": (-1.21, 0.0, 1.4),
     "entry": (-0.05, 0.0, 1.9),
+    "sidewalk": (-2.1, 0.0, 6.0),
+}
+
+# Same-floor door graph (mirrors layout.ts doorsFor).
+ROOM_ADJ = {
+    "living": ["hall", "bedroom-w"],
+    "bedroom-w": ["living", "landing"],
+    "landing": ["bedroom-w", "bedroom-e"],
+    "bedroom-e": ["landing", "kitchen"],
+    "kitchen": ["hall", "bedroom-e"],
+    "hall": ["living", "kitchen"],
+}
+
+# Rooms that catch fire from a neighbor once intensity is high enough.
+FIRE_ADJ = {
+    "kitchen": ["hall", "bedroom-e"],
+    "hall": ["kitchen", "living"],
+    "living": ["hall", "bedroom-w"],
+    "bedroom-w": ["living", "landing"],
+    "bedroom-e": ["kitchen", "landing"],
+    "landing": ["bedroom-w", "bedroom-e"],
 }
 
 
@@ -58,6 +80,168 @@ def ext(name: str) -> dict:
 
 def room_id(floor: int, kind: str) -> str:
     return f"{floor}-{kind}"
+
+
+def _bfs_rooms(start: str, goal: str) -> list[str]:
+    if start == goal:
+        return [start]
+    queue = [start]
+    prev = {start: None}
+    while queue:
+        cur = queue.pop(0)
+        for nxt in ROOM_ADJ.get(cur, []):
+            if nxt in prev:
+                continue
+            prev[nxt] = cur
+            if nxt == goal:
+                path = [goal]
+                while path[-1] != start:
+                    path.append(prev[path[-1]])
+                return list(reversed(path))
+            queue.append(nxt)
+    return [start, goal]
+
+
+def _stair_climb(from_floor: int) -> list[dict]:
+    """Waypoints along the switchback between from_floor and from_floor+1."""
+    y0 = FLOOR_Y[from_floor]
+    return [
+        {"x": 7.0, "y": y0 + 0.05, "z": 4.2, "floor": from_floor - 1},
+        {"x": 7.0, "y": y0 + 0.75, "z": 5.8, "floor": from_floor - 1},
+        {"x": 8.0, "y": y0 + FLOOR_HEIGHT / 2, "z": 7.95, "floor": from_floor - 1},
+        {"x": 9.0, "y": y0 + 2.25, "z": 5.8, "floor": from_floor},
+        {"x": 9.0, "y": y0 + FLOOR_HEIGHT - 0.05, "z": 4.2, "floor": from_floor},
+    ]
+
+
+def route_positions(origin, destination) -> list[dict]:
+    """World positions from origin -> destination via halls and stairs.
+
+    Locations are either ("ext", name) or (floor:int, kind:str).
+    """
+    if origin == destination:
+        return []
+
+    points: list[dict] = []
+
+    def emit_same_floor(floor: int, a: str, b: str):
+        for kind in _bfs_rooms(a, b)[1:]:
+            points.append(pos(floor, kind))
+
+    # Normalize: step onto floor 1 hall if starting outside.
+    if origin[0] == "ext":
+        if origin[1] != "entry":
+            if origin[1] == "engine":
+                points.append(ext("sidewalk"))
+            points.append(ext("entry"))
+        points.append(pos(1, "hall"))
+        cur_floor, cur_kind = 1, "hall"
+    else:
+        cur_floor, cur_kind = origin
+
+    if destination[0] == "ext":
+        # Walk to floor-1 hall, then out.
+        if cur_floor != 1 or cur_kind != "hall":
+            if cur_kind != "hall":
+                emit_same_floor(cur_floor, cur_kind, "hall")
+                cur_kind = "hall"
+            step = 1 if 1 > cur_floor else -1
+            while cur_floor != 1:
+                nxt = cur_floor + step
+                if step > 0:
+                    points.extend(_stair_climb(cur_floor))
+                else:
+                    points.extend(reversed(_stair_climb(nxt)))
+                cur_floor = nxt
+                points.append(pos(cur_floor, "hall"))
+            cur_kind = "hall"
+        points.append(ext("entry"))
+        if destination[1] != "entry":
+            if destination[1] == "engine":
+                points.append(ext("sidewalk"))
+            points.append(ext(destination[1]))
+        return points
+
+    dest_floor, dest_kind = destination
+
+    if cur_kind != "hall" and cur_floor != dest_floor:
+        emit_same_floor(cur_floor, cur_kind, "hall")
+        cur_kind = "hall"
+    elif cur_floor == dest_floor:
+        emit_same_floor(cur_floor, cur_kind, dest_kind)
+        return points
+
+    step = 1 if dest_floor > cur_floor else -1
+    while cur_floor != dest_floor:
+        nxt = cur_floor + step
+        if step > 0:
+            points.extend(_stair_climb(cur_floor))
+        else:
+            points.extend(list(reversed(_stair_climb(nxt))))
+        cur_floor = nxt
+        points.append(pos(cur_floor, "hall"))
+        cur_kind = "hall"
+
+    if dest_kind != "hall":
+        emit_same_floor(cur_floor, "hall", dest_kind)
+    return points
+
+
+def walk_to(log: "EventLog", agent_id: str, role: str, state: dict, destination, dt_per_hop: float = 0.7):
+    """Emit move events along a stair-aware route; track agent location in state['at']."""
+    origin = state.setdefault("at", {}).get(agent_id, ("ext", "engine"))
+    for point in route_positions(origin, destination):
+        log.move(agent_id, role, point, dt=dt_per_hop)
+    state["at"][agent_id] = destination
+
+
+def emit_fire_stage(log: "EventLog", stage: int, vent_approved: bool | None = None):
+    """Progressive fire/smoke across rooms. Scene only renders what we emit."""
+    if stage == 0:
+        log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.28},
+                   "Grease fire starts on the stove.", dt=0.0)
+        log.world({"type": "smoke", "roomId": room_id(3, "hall"), "intensity": 0.2},
+                   "Smoke reaches the hall first.")
+        log.world({"type": "door", "doorId": "3-door-kitchen-hall", "openness": 0.15},
+                   "Kitchen door ajar — heat already leaking into the hall.", dt=0.1)
+    elif stage == 1:
+        log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.55},
+                   "Kitchen fire climbing; cabinets involved.")
+        log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.22},
+                   "Fire pushes into the hall toward the stair core.")
+        log.world({"type": "smoke", "roomId": room_id(3, "hall"), "intensity": 0.45},
+                   "Hall smoke thickens.")
+        log.world({"type": "smoke", "roomId": room_id(3, "living"), "intensity": 0.25},
+                   "Smoke drifts into the living room.", dt=0.2)
+    elif stage == 2:
+        intensity = 0.35 if vent_approved else 0.7
+        log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": intensity + 0.15},
+                   "Origin still burning after hose contact.")
+        log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.18 if vent_approved else 0.4},
+                   "Stair-adjacent hall still hot.")
+        log.world({"type": "smoke", "roomId": room_id(3, "bedroom-w"), "intensity": 0.3},
+                   "Smoke reaches the skeptic's bedroom.")
+        log.world({"type": "smoke", "roomId": room_id(4, "hall"), "intensity": 0.25},
+                   "Heat column drives smoke up the stairwell to floor 4.", dt=0.2)
+    elif stage == 3:
+        if vent_approved:
+            log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.25},
+                       "Venting and water knocked the kitchen back.")
+            log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.08},
+                       "Hall fire nearly out.")
+            log.world({"type": "smoke", "roomId": room_id(4, "landing"), "intensity": 0.2},
+                       "Residual smoke upstairs.", dt=0.2)
+        else:
+            log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.85},
+                       "Sealed kitchen flashover risk.")
+            log.world({"type": "fire", "roomId": room_id(3, "hall"), "intensity": 0.55},
+                       "Hall fully involved; stairs threatened.")
+            log.world({"type": "fire", "roomId": room_id(3, "bedroom-e"), "intensity": 0.3},
+                       "Fire spreads east into the bedroom.")
+            log.world({"type": "smoke", "roomId": room_id(4, "hall"), "intensity": 0.5},
+                       "Floor 4 hall filling — family is next on the path.")
+            log.world({"type": "smoke", "roomId": room_id(4, "landing"), "intensity": 0.35},
+                       "Landing smoke cuts the north exit.", dt=0.2)
 
 
 PERSONAS_DIR = Path(__file__).parent / "personas"
@@ -178,13 +362,15 @@ def decide_scout_sweep(log: EventLog, rng, state):
         (4, "bedroom-e", "victim-parent"),
         (5, "living", "victim-regular"),
     ]
+    state.setdefault("at", {})["scout-1"] = ("ext", "engine")
     for floor, kind, victim in tour:
-        log.move("scout-1", "scout", pos(floor, kind), dt=2.0)
+        walk_to(log, "scout-1", "scout", state, (floor, kind), dt_per_hop=0.55)
         if kind == "kitchen":
             log.act("scout-1", "scout", "scan_room", room_id(floor, kind),
                      "Heat signature matches an active stove fire.", dt=1.0)
             log.speak("scout-1", "scout", "Confirmed, fire is in the floor 3 kitchen.", None, dt=0.5)
             state["fire_confirmed"] = True
+            emit_fire_stage(log, 1)
             continue
         log.act("scout-1", "scout", "scan_room", room_id(floor, kind),
                  f"Checking {kind.replace('-', ' ')} on floor {floor}.", dt=1.0)
@@ -208,7 +394,8 @@ def decide_commander_assign(log: EventLog, rng, state):
 
 
 def decide_hose(log: EventLog, rng, state):
-    log.move("hose-1", "suppression", pos(3, "hall"), dt=3.0)
+    state.setdefault("at", {})["hose-1"] = ("ext", "engine")
+    walk_to(log, "hose-1", "suppression", state, (3, "hall"), dt_per_hop=0.6)
     vent_approved = rng.random() < 0.6
     seq = log.request_approval(
         "hose-1", "suppression", "vent", room_id(3, "kitchen"),
@@ -218,24 +405,25 @@ def decide_hose(log: EventLog, rng, state):
     if vent_approved:
         log.act("hose-1", "suppression", "vent", room_id(3, "kitchen"), "Operator approved, venting now.",
                  risky=True, extra={"approval_of_seq": seq})
-        log.world({"type": "smoke", "roomId": room_id(3, "hall"), "intensity": 0.2},
-                   "Venting cleared most of the stairwell smoke.")
+        log.world({"type": "door", "doorId": "3-door-kitchen-hall", "openness": 0.9},
+                   "Kitchen door opened for vent.")
+        log.world({"type": "window", "windowId": "3-window-living-w", "broken": True},
+                   "West window broken to relieve pressure.")
     else:
         log.act("hose-1", "suppression", "spray", room_id(3, "kitchen"), "Operator denied the vent, holding with water instead.")
-        log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.55},
-                   "No vent, so the fire keeps building in the sealed kitchen.")
     state["vent_approved"] = vent_approved
+    emit_fire_stage(log, 2, vent_approved=vent_approved)
 
 
 def decide_rescue_easy(log: EventLog, rng, state, floor, kind, victim_id, name):
-    log.move("rescue-1", "rescue", pos(floor, kind), dt=2.5)
+    walk_to(log, "rescue-1", "rescue", state, (floor, kind), dt_per_hop=0.55)
     log.speak("rescue-1", "rescue", f"{name}, this way, let's go.", "First ask, no complication expected.")
     log.status(victim_id, "moving", "rescue-1")
     log.status(victim_id, "rescued", "rescue-1", dt=3.0)
 
 
 def decide_rescue_teen(log: EventLog, rng, state):
-    log.move("rescue-1", "rescue", pos(1, "living"), dt=2.5)
+    walk_to(log, "rescue-1", "rescue", state, (1, "living"), dt_per_hop=0.55)
     log.speak("rescue-1", "rescue", "Time to go, the fire's upstairs.", None)
     log.speak("victim-teen", "victim", "One sec, let me get the flames in frame.",
               "Streaming the fire live, won't leave mid-stream per persona.")
@@ -246,7 +434,7 @@ def decide_rescue_teen(log: EventLog, rng, state):
 
 
 def decide_rescue_elderly(log: EventLog, rng, state):
-    log.move("rescue-1", "rescue", pos(2, "bedroom-w"), dt=2.5)
+    walk_to(log, "rescue-1", "rescue", state, (2, "bedroom-w"), dt_per_hop=0.55)
     log.speak("rescue-1", "rescue", "Mrs. Okafor, we need to leave now.", None)
     log.speak("victim-elderly", "victim", "Not without my cat.",
               "Won't leave without her pet, per persona.")
@@ -257,7 +445,7 @@ def decide_rescue_elderly(log: EventLog, rng, state):
 
 
 def decide_rescue_couple(log: EventLog, rng, state):
-    log.move("rescue-1", "rescue", pos(2, "bedroom-e"), dt=2.5)
+    walk_to(log, "rescue-1", "rescue", state, (2, "bedroom-e"), dt_per_hop=0.55)
     log.speak("rescue-1", "rescue", "Let's go, both of you.", None)
     log.status("victim-couple-a", "moving", "rescue-1")
     log.status("victim-couple-b", "moving", "rescue-1")
@@ -266,7 +454,7 @@ def decide_rescue_couple(log: EventLog, rng, state):
 
 
 def decide_rescue_skeptic(log: EventLog, rng, state):
-    log.move("rescue-1", "rescue", pos(3, "bedroom-w"), dt=2.5)
+    walk_to(log, "rescue-1", "rescue", state, (3, "bedroom-w"), dt_per_hop=0.55)
     log.speak("rescue-1", "rescue", "I can get you out safely, follow me.", None)
     already_saved = bool(state.get("already_rescued"))
     if not already_saved:
@@ -287,7 +475,8 @@ def decide_child_refusal(log: EventLog, rng, state, memory: dict):
     reaches the parent and child, and the child's own persona decides
     whether to comply -- seeded, not scripted, and shaped by what past runs
     taught `memory` about how to approach this child."""
-    log.move("rescue-1", "rescue", pos(4, "bedroom-e"), dt=2.5)
+    walk_to(log, "rescue-1", "rescue", state, (4, "bedroom-e"), dt_per_hop=0.55)
+    emit_fire_stage(log, 3, vent_approved=state.get("vent_approved"))
     log.speak("commander", "commander", "Rescue-1, get the family out, floor 4 is next on the fire's path.",
                "Smoke is rising from 3; floor 4 can't wait.")
     if memory["cautious_briefing"]:
@@ -300,15 +489,16 @@ def decide_child_refusal(log: EventLog, rng, state, memory: dict):
     if bolts:
         log.speak("victim-child", "victim", "No! You're too loud, I'm not going with you.",
                    "Distrusts a direct order from a robot on the first ask, per persona.")
-        log.move("victim-child", "victim", pos(4, "bedroom-w"), dt=1.5)
-        log.world({"type": "smoke", "roomId": room_id(4, "landing"), "intensity": 0.35},
+        state.setdefault("at", {})["victim-child"] = (4, "bedroom-e")
+        walk_to(log, "victim-child", "victim", state, (4, "bedroom-w"), dt_per_hop=0.45)
+        log.world({"type": "smoke", "roomId": room_id(4, "landing"), "intensity": 0.45},
                    "Child slipped out of the room before reaching the exit -- the stakes just went up.")
         log.speak("victim-parent", "victim", "Where did they go?! I'm not leaving without them!",
                    "Refuses to move toward the exit until the child is confirmed found, per persona.")
         log.decide("commander", "commander",
                     {"action": "re-assign", "target": "rescue-1", "utterance": "Rescue-1, the child bolted toward bedroom-w. Find them first."},
                     "The parent won't move without the child; re-plan around finding the child.")
-        log.move("rescue-1", "rescue", pos(4, "bedroom-w"), dt=2.0)
+        walk_to(log, "rescue-1", "rescue", state, (4, "bedroom-w"), dt_per_hop=0.5)
         found = rng.random() < memory["found_prob"]
         if found:
             log.speak("rescue-1", "rescue", "Found you. I'll go slow, I promise.",
@@ -368,11 +558,15 @@ def build_run(seed: int, memory: dict | None = None) -> list:
     rng = random.Random(seed)
     log = EventLog()
     log.rng = rng
-    state = {}
+    state = {
+        "at": {
+            "scout-1": ("ext", "engine"),
+            "hose-1": ("ext", "engine"),
+            "rescue-1": ("ext", "engine"),
+        }
+    }
 
-    log.world({"type": "fire", "roomId": room_id(3, "kitchen"), "intensity": 0.15},
-               "Grease fire starts on the stove. Clear origin, time pressure from the start.", dt=0.0)
-    log.world({"type": "smoke", "roomId": room_id(3, "hall"), "intensity": 0.15}, "Smoke reaches the hall first.")
+    emit_fire_stage(log, 0)
 
     decide_commander_open(log, rng, state)
     decide_scout_sweep(log, rng, state)

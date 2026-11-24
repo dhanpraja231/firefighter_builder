@@ -58,5 +58,5 @@ function FireLight({ intensity }: { intensity: number }) {
     const flicker = 0.78 + Math.sin(t * 11) * 0.12 + Math.sin(t * 23) * 0.08 + Math.sin(t * 5.5) * 0.06;
     current.intensity = (2 + intensity * 13) * flicker;
   });
-  return <pointLight ref={light} position={[0, 0.9, 0]} color="#ff6a2a" distance={5 + intensity * 7} decay={2} />;
+  return <pointLight ref={light} position={[0, 0.9, 0]} color="#ff6a2a" distance={7 + intensity * 10} decay={2} />;
 }

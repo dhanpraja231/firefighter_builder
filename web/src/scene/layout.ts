@@ -2,6 +2,7 @@ import {
   BUILDING_DEPTH,
   BUILDING_WIDTH,
   EXTERIOR,
+  FLOOR_HEIGHT,
   FLOOR_IDS,
   type BuildingLayout,
   type CharacterRole,
@@ -439,8 +440,41 @@ export function buildNavGraph(layout: BuildingLayout, exterior: ExteriorLayout):
   }
 
   addEdge("exterior-entry", rid(1, "hall"));
+
+  // Vertical routes follow the switchback stair mesh (Staircase.tsx), not a
+  // straight hall→hall chord through the slab. Nodes sit on the lower flight,
+  // mid-landing, and upper flight so pathfinding walks the visible stairs.
   for (let floorId = 1; floorId < FLOOR_IDS.length; floorId += 1) {
-    addEdge(rid(floorId as FloorId, "hall"), rid((floorId + 1) as FloorId, "hall"));
+    const lower = floorId as FloorId;
+    const upper = (floorId + 1) as FloorId;
+    const y0 = floorY(lower);
+    const enterId = `${lower}-stair-enter`;
+    const midId = `${lower}-stair-mid`;
+    const exitId = `${lower}-stair-exit`;
+    addNode({
+      id: enterId,
+      floorId: lower,
+      kind: "stair",
+      position: [7.0, y0 + 0.05, 4.2],
+    });
+    addNode({
+      id: midId,
+      floorId: lower,
+      kind: "stair",
+      position: [8.0, y0 + FLOOR_HEIGHT / 2, 7.95],
+    });
+    addNode({
+      id: exitId,
+      floorId: upper,
+      kind: "stair",
+      position: [9.0, y0 + FLOOR_HEIGHT - 0.05, 4.2],
+    });
+    addEdge(rid(lower, "hall"), enterId);
+    addEdge(enterId, midId);
+    addEdge(midId, exitId);
+    addEdge(exitId, rid(upper, "hall"));
+    // Mid-landing also reaches the north landing room on the lower floor.
+    addEdge(midId, rid(lower, "landing"));
   }
 
   return { nodes, edges };
