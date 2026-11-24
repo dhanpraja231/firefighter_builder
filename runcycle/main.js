@@ -6,6 +6,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
 import { createRunClip, groundSpeed, RUN } from './runCycle.js';
+import { createFootLock, calibrate, updateFootLock } from './footIK.js';
 
 // Models outside the Vite public dir, resolved to dev-server URLs.
 const personUrl = (name) => new URL(`../models/people/${name}.glb`, import.meta.url).href;
@@ -26,18 +27,50 @@ const VICTIMS = [
 // Assumed real height of the firefighter model, used to convert meters to MMD units.
 const FIREFIGHTER_METERS = 1.8;
 
-// Rocketbox clips move the root bone forward. Remove that travel so the character
-// runs in place, and return the forward speed it had (meters per second) and its
-// direction (+1 or -1 along Z).
-function inPlace(clip) {
-  const track = clip.tracks.find((t) => t.name === 'Bip01.position');
-  if (!track) return { speed: 0, dir: 1 };
+// Rocketbox clips carry root motion: the root bone drifts forward over the clip.
+// Subtract that linear drift from the root position track (keeps the bob and sway,
+// makes the loop seamless) and return the drift in world space per clip-second.
+// `model` must already be scaled and in the scene graph.
+function inPlace(clip, model) {
+  // The root motion lives on the "Bip01" armature node (not a Bone in three.js).
+  const rootBone = model.getObjectByName('Bip01');
+  const track = rootBone && clip.tracks.find((t) => t.name === 'Bip01.position');
+  if (!track) return new THREE.Vector3();
   const v = track.values;
-  const z0 = v[2];
-  const travel = v[v.length - 1] - z0;
-  for (let i = 2; i < v.length; i += 3) v[i] = z0;
-  return { speed: Math.abs(travel) / clip.duration, dir: Math.sign(travel) || 1 };
+  const t = track.times;
+  const n = t.length;
+  const d = new THREE.Vector3(v[3 * n - 3] - v[0], v[3 * n - 2] - v[1], v[3 * n - 1] - v[2]);
+  const span = t[n - 1] - t[0];
+  for (let i = 0; i < n; i++) {
+    const k = (t[i] - t[0]) / span;
+    v[3 * i] -= d.x * k;
+    v[3 * i + 1] -= d.y * k;
+    v[3 * i + 2] -= d.z * k;
+  }
+  // bone-local drift -> world drift (parent is the armature node with scale/rotation)
+  model.updateMatrixWorld(true);
+  const world = d.applyMatrix4(new THREE.Matrix4().extractRotation(rootBone.parent.matrixWorld));
+  world.multiplyScalar(rootBone.parent.getWorldScale(new THREE.Vector3()).x);
+  world.y = 0;
+  return world.divideScalar(span);
 }
+
+// Lowest point of a set of bones, in the model root's space.
+const _p = new THREE.Vector3();
+function lowestY(bones, root) {
+  let min = Infinity;
+  for (const b of bones) {
+    _p.setFromMatrixPosition(b.matrixWorld);
+    root.worldToLocal(_p);
+    if (_p.y < min) min = _p.y;
+  }
+  return min;
+}
+
+// Foot grounding for the mocap people: after the mixer poses the skeleton, shift the
+// whole model vertically so the lowest foot bone sits at its bind-pose height. This
+// stops feet sinking into or floating above the floor when clip and avatar differ.
+const grounded = [];
 
 const status = document.getElementById('status');
 
@@ -187,15 +220,29 @@ async function main() {
       root.position.set((i - (VICTIMS.length - 1) / 2) * victimSpacing, 0, -16);
       scene.add(root);
 
+      // bind-pose foot height, before any animation is applied
+      const feet = [];
+      model.traverse((o) => {
+        if (o.isBone && /(^|_)[LR]_Toe0$|(^|_)[LR]_Foot$/.test(o.name)) feet.push(o);
+      });
+      root.updateMatrixWorld(true);
+      const restFootY = lowestY(feet, root);
+
       const clip = g.animations.find((c) => c.name === v.clip) ?? pickClip(g.animations, /run/i, /walk/i);
-      const { speed, dir } = inPlace(clip);
-      if (dir < 0) model.rotation.y = Math.PI; // face +Z like the firefighters
+      const drift = inPlace(clip, model); // world units per clip-second
+      // face the direction the clip was travelling in, mapped onto +Z (the firefighters' forward)
+      model.rotation.y = -Math.atan2(drift.x, drift.z);
       const mixer = new THREE.AnimationMixer(model);
       mixer.clipAction(clip).play();
-      // play the clip at the speed where planted feet match the scrolling floor
-      mixer.timeScale = speed ? groundUnitsPerSec / (speed * unitsPerMeter) : 1;
+      // Play the clip at the rate where its planted foot already moves at floor speed,
+      // so the foot lock below only has small corrections to make.
+      const rig = createFootLock(root, model);
+      const stance = rig ? calibrate(rig, mixer, clip) : 0;
+      const speed = stance > 1e-3 ? stance : drift.length();
+      mixer.timeScale = speed > 1e-3 ? groundUnitsPerSec / speed : 1;
       mixer.setTime(i * 0.13);
       mixers.push(mixer);
+      grounded.push({ root, model, feet, restFootY, rig, mixer });
 
       const height = new THREE.Box3().setFromObject(model).max.y;
       addLabel(root, `${v.id} · ${v.file}`, height + 1.5, '#9fd3ff');
@@ -222,7 +269,7 @@ async function main() {
 
   ready = true;
   status.textContent = 'Space: pause   ↑/↓: speed   drag: orbit';
-  window.__cast = { helper, mixers, scene }; // for debugging in the console
+  window.__cast = { helper, mixers, scene, grounded, camera, controls }; // for debugging in the console
 }
 
 main().catch((err) => {
@@ -250,6 +297,12 @@ renderer.setAnimationLoop(() => {
   if (ready) {
     helper.update(dt);
     for (const m of mixers) m.update(dt);
+    for (const g of grounded) {
+      g.model.position.y = 0;
+      g.root.updateMatrixWorld(true);
+      g.model.position.y = g.restFootY - lowestY(g.feet, g.root);
+      if (g.rig && dt > 0) updateFootLock(g.rig, dt, speed);
+    }
     ground.position.z = (ground.position.z - speed * dt) % CELL;
   }
   controls.update();
