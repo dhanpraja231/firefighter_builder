@@ -26,6 +26,10 @@ interface RunMemory {
   cautious_briefing: boolean;
   bolt_prob: number;
   found_prob: number;
+  saved?: number;
+  total?: number;
+  lessons_used?: number;
+  lessons_written?: number;
 }
 
 interface RunResponse {
@@ -310,10 +314,10 @@ function RunPanel({
             Attempt #{run.run_number} · seed {run.seed}
           </div>
           <div style={{ fontSize: 10, opacity: 0.65, marginTop: 2, lineHeight: 1.4 }}>
-            {run.memory.cautious_briefing
-              ? `Learned: lead with the gentle approach with the child (${run.memory.child_losses} earlier loss${
-                  run.memory.child_losses === 1 ? "" : "es"
-                } so far)`
+            {run.memory.total != null
+              ? `${run.memory.saved}/${run.memory.total} saved · used ${run.memory.lessons_used ?? 0} lesson${
+                  run.memory.lessons_used === 1 ? "" : "s"
+                } from earlier runs · wrote ${run.memory.lessons_written ?? 0} new`
               : "No lessons learned yet -- this is the first attempt."}
           </div>
 

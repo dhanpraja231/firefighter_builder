@@ -32,9 +32,9 @@ columns:
 with twists as (
   select
     run_id,
-    string_agg(world ->> 'twist', ', ' order by seq) as twists
+    string_agg(distinct coalesce(twist, world ->> 'twist'), ', ') as twists
   from staging.events
-  where type = 'world_event' and world ->> 'kind' = 'twist'
+  where twist is not null or world ->> 'kind' = 'twist'
   group by 1
 ),
 
@@ -90,7 +90,8 @@ select
     when coalesce(v.victims, 0) > 0 and v.rescued = v.victims then 'everyone saved'
     when v.rescued > 0 then 'some saved'
     else 'no one saved'
-  end as ending
+  end as ending,
+  now() as built_at
 from raw.runs r
 left join duration d using (run_id)
 left join twists t using (run_id)

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scene and Ops</title>
+<style>
+:root { color-scheme: light; --bg: #f6f5f2; --surface: #fcfcfb; --ink: #161513; --ink-3: #75736d; --line: #e3e1db; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-3: #a6a39b; --line: #34332f; } }
+:root[data-theme="dark"] { color-scheme: dark; --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-3: #a6a39b; --line: #34332f; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 13px/1.4 "IBM Plex Sans", system-ui, sans-serif; display: flex; flex-direction: column; }
+.bar { display: flex; gap: 18px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.bar b { font-weight: 600; }
+.bar a { color: var(--ink-3); }
+.panes { flex: 1; display: grid; grid-template-columns: var(--split, 50%) 6px minmax(0, 1fr); min-height: 0; }
+iframe { width: 100%; height: 100%; border: 0; background: var(--surface); }
+.handle { cursor: col-resize; background: var(--line); }
+.handle:hover { background: var(--ink-3); }
+@media (max-width: 800px) { .panes { grid-template-columns: 1fr; grid-template-rows: 50% 50%; } .handle { display: none; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>Scene and ops</b>
+  <span style="color:var(--ink-3)">Press Play in the scene; the run shows up on the right within a few seconds.</span>
+  <span style="margin-left:auto"><a href="http://localhost:5173" target="_blank" rel="noopener">open scene alone</a> · <a href="/" target="_blank" rel="noopener">open dashboard alone</a></span>
+</div>
+<div class="panes" id="panes">
+  <iframe src="http://localhost:5173" title="3D scene" allow="fullscreen"></iframe>
+  <div class="handle" id="handle" title="Drag to resize"></div>
+  <iframe src="/" title="Ops dashboard"></iframe>
+</div>
+<script>
+const panes = document.getElementById("panes"), handle = document.getElementById("handle");
+handle.onpointerdown = (e) => {
+  handle.setPointerCapture(e.pointerId);
+  panes.querySelectorAll("iframe").forEach((f) => f.style.pointerEvents = "none");
+  handle.onpointermove = (m) => panes.style.setProperty("--split", `${Math.min(80, Math.max(20, (m.clientX / innerWidth) * 100))}%`);
+  handle.onpointerup = () => { handle.onpointermove = null; panes.querySelectorAll("iframe").forEach((f) => f.style.pointerEvents = ""); };
+};
+</script>
+</body>
+</html>

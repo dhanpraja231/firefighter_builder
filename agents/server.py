@@ -1,5 +1,6 @@
 """Tiny local HTTP server so the web app's Play button triggers a real
-orchestrator run -- stdlib only, no pip install needed.
+orchestrator run -- stdlib only, no pip install needed. With FF_API_URL set,
+each run is sent to the event API and debriefed into lessons for the next run.
 
     python3 agents/server.py            # serves http://127.0.0.1:8787
 
@@ -15,7 +16,9 @@ import random as _random
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from orchestrator import build_run, build_sql, load_memory, save_memory, write_to_postgres
+import api_client
+import llm
+from orchestrator import after_run, build_run, build_sql, load_memory, write_to_postgres
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -48,24 +51,35 @@ class Handler(BaseHTTPRequestHandler):
         seed_param = qs.get("seed", [None])[0]
         seed = int(seed_param) if seed_param else _random.randint(1, 1_000_000)
 
-        memory = load_memory()
         try:
-            events, memory, run_id = build_run(seed, memory)
+            events, info, run_id = build_run(seed)
         except Exception as exc:  # keep the demo alive even if a beat errors
             self._json(500, {"error": str(exc)})
             return
-        save_memory(memory)
+        if llm.enabled():
+            llm.enrich_run(events)  # Runware voices the scripted lines; decisions already came from the LLM
 
         postgres_error = None
+        lessons = []
         try:
-            write_to_postgres(build_sql(events, seed, run_id))
-        except Exception as exc:  # Bruin write is best-effort -- the browser still gets to play the run
+            if api_client.enabled():
+                # The event API writes to Postgres and runs Bruin when the run ends.
+                api_client.post_run(events, seed, run_id, notes="orchestrator run")
+                lessons = after_run(info, run_id)  # debrief -> lessons for the next run
+            else:
+                write_to_postgres(build_sql(events, seed, run_id))
+        except Exception as exc:  # the browser still gets to play the run
             postgres_error = str(exc)
 
+        lost = sum(1 for st, _ in info["outcomes"].values() if st == "lost")
+        memory = {"runs": info["runs"], "saved": info["saved"], "total": len(info["outcomes"]),
+                  "lessons_used": info["lessons_used"], "lessons_written": len(lessons),
+                  # fields the web app already reads
+                  "cautious_briefing": info["lessons_used"] > 0, "child_losses": lost, "bolt_prob": 0, "found_prob": 0}
         self._json(200, {
             "seed": seed,
             "run_id": run_id,
-            "run_number": memory["runs"],
+            "run_number": info["runs"],
             "memory": memory,
             "events": events,
             "postgres_error": postgres_error,

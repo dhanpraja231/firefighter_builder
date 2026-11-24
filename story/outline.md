@@ -42,11 +42,17 @@ The film runs about 2 minutes.
 5. **Re-plan.** The commander re-assigns the robots. Some victims get out, and some may not.
 6. **End card.** It shows who was saved, the key decisions and the reasons for them, and the human's verdict on the outcome.
 
+## Clock and failure
+
+The run has a clock. Fire spreads room by room every second, smoke rises up the stairs, and every victim's air runs
+down while they wait. At 150 s the building is no longer safe and anyone still inside is lost. One rescue robot and
+one ladder truck can't reach everyone in time, so the commander has to choose who goes first. Those choices, and how
+the rescue robot talks to each person, decide the ending. The rules are in SPEC.md section 4b.
+
 ## Ending
 
 Open. The agents decide, so a run can end with everyone saved, some saved or no one saved. A human approves or declines
-the overall outcome of each run. That verdict will later feed a self-improvement loop, so future runs can do better
-(not built yet).
+the overall outcome of each run. After each run the commander writes lessons, and the human's verdict decides how the next run weighs them.
 
 ## Open questions
 

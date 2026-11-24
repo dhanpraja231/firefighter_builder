@@ -35,10 +35,10 @@ Different seeds, different twists and different human approvals give different e
 
 ```
                          +--------------------------------------+
-agents (orchestrator) -->|  API  (FastAPI, ECS Fargate, ALB)    |--> RDS Postgres  raw.*
+agents (orchestrator) -->|  API + dashboard (FastAPI, :8010)    |--> Postgres (Docker)  raw.*
 human approver -------->|                                      |          |
 Three.js scene  <-------|  timeline, SSE, decision-log, metrics |<--+      | bruin run
-                         +--------------------------------------+   |      | (ECS task: every 2 min
+                         +--------------------------------------+   |      | (run by the API: every 2 min
                                                                     |      |  and on run end)
                                                                     +-- mart.* <-+
 ```
@@ -47,10 +47,10 @@ Repo layout:
 
 | Path | What lives there | Owner |
 | --- | --- | --- |
-| `api/` | FastAPI service, Dockerfile | Part 1 |
+| `api/` | Event API and dashboard (FastAPI) | Part 1 |
 | `bruin/` | Bruin pipeline (`pipeline.yml`, `assets/`) and its Dockerfile | Part 1 |
-| `infra/` | CDK (Python) stack for AWS | Part 1 |
-| `agents/` | Orchestrator, agent prompts, persona cards, Bedrock client | Parts 2, 4, 5 |
+| `infra/` | How to run everything locally | Part 1 |
+| `agents/` | Orchestrator, agent prompts, persona cards, Runware LLM client (`llm.py`), event API client (`api_client.py`) | Parts 2, 4, 5 |
 | `story/` | Story outline, characters, twists, beats | Part 2 |
 | `scenarios/` | Scenario JSON files | Part 2 |
 | `web/` | Three.js scene, decision-log panel, approval modal | Part 3 |
@@ -60,7 +60,7 @@ Repo layout:
 Owner: data lead (add your name).
 
 Bruin is a CLI (`bruin run`), not a server, and its MCP server only runs locally over stdio. So agents never call Bruin.
-They call our API, which writes to Postgres, and Bruin runs as a container task on ECS that transforms what is there.
+They call our API, which writes to Postgres, and the API runs Bruin to transform what is there.
 
 ### 1.1 Event schema
 
@@ -86,7 +86,7 @@ This is the one contract every part writes to or reads from. Field names are fix
   },
   "reasoning": "Victim 3 has stopped responding and smoke in 2B is rising.",
   "confidence": 0.7,
-  "model": "openai.gpt-oss-120b-1:0",
+  "model": "google:gemma@4-31b",
   "latency_ms": 820,
   "tokens_in": 900,
   "tokens_out": 120
@@ -148,7 +148,7 @@ FastAPI, one container, JSON in and out. CORS open for the demo. A shared bearer
 | `GET /runs/{id}/metrics` | Rows from `mart.agent_metrics` and `mart.victim_outcomes` | Side panel |
 | `GET /runs/compare` | Rows from `mart.run_summary` | End card of the film |
 | `POST /runs/{id}/end` | Marks the run finished, starts the Bruin task with `ecs:RunTask` | Orchestrator |
-| `GET /health` | DB check | ALB |
+| `GET /health` | DB check | Dashboard, scripts |
 
 The orchestrator waits on approvals by polling `GET /approvals` once per tick. If the human does not answer within the
 timeout (default 15 s wall clock), the orchestrator writes `approval` with `timeout_default` and applies the role's
@@ -156,7 +156,7 @@ default (usually deny).
 
 ### 1.3 Postgres
 
-RDS Postgres. Three schemas.
+Postgres (local Docker container). Three schemas.
 
 `raw` (written only by the API):
 
@@ -222,31 +222,25 @@ Quality checks:
 
 CI: GitHub Actions runs `bruin validate bruin/` using `bruin-data/setup-bruin`.
 
-### 1.5 AWS deployment
+### 1.5 Deployment
 
-CDK (Python), one stack, region us-east-1 (same region as the Bedrock models we tested).
+Local, on one laptop. Commands are in `infra/README.md`.
 
-- VPC with two public subnets and no NAT gateway. Fargate tasks get public IPs.
-- Security groups: internet to ALB on 80, ALB to API on 8000, API and Bruin tasks to RDS on 5432.
-- RDS Postgres, `db.t4g.micro`, 20 GB, credentials generated into Secrets Manager.
-- ECR repositories `api` and `bruin`.
-- ECS cluster:
-  - API service: 1 Fargate task (0.5 vCPU, 1 GB) behind an ALB, logs to CloudWatch.
-  - Bruin task definition (ARM64): the `bruin/` image, with `PGHOST`, `PGUSER` and `PGPASSWORD` injected from the
-    RDS secret. It runs `bruin run --environment production --force`, logs to CloudWatch.
-- EventBridge Scheduler: runs the Bruin task every 2 minutes during the demo window. Disable after the event.
-- IAM:
-  - API task role: `ecs:RunTask` on the Bruin task definition, `iam:PassRole` for the Bruin roles only.
-  - Orchestrator (runs on a laptop or as another task): `bedrock:InvokeModel` and `bedrock:Converse` on the chosen model.
-- Outputs: ALB URL, DB endpoint, secret ARNs.
+- Postgres 17 in Docker (`ff-pg`, port 5433).
+- Event API and dashboard (`api/`, FastAPI, port 8010). On startup it applies `db/schema.sql`. It runs
+  `bruin run bruin/` every 2 minutes, when a run ends (`POST /runs/{id}/end`) and from the dashboard's
+  "Run Bruin now" button.
+- Agents (`agents/`) call Runware for the LLM and post events to the API.
 
-Deploy: `aws login`, then `cdk bootstrap` once, then `cdk deploy`. Build and push images with a `make push` target.
+An AWS version (RDS, ECS Fargate, ALB, EventBridge) was built and torn down the same day. `bruin/Dockerfile` and
+`bruin/config.production.yml` are left from it.
 
 ### 1.6 Observability
 
-- CloudWatch Logs for the API and every Bruin run.
+- The dashboard at `/` shows whether Postgres and Bruin are healthy, the live event feed, the decision log, agent
+  metrics (LLM calls, latency, tokens) and victim outcomes.
 - `mart.agent_metrics` is the agent-level view: LLM latency, token use, approval rate per agent.
-- Optional (Telem prize): wrap each Bedrock call in a Telem trace span with `run_id`, `agent_id` and `seq` attributes so
+- Optional (Telem prize): wrap each Runware call in a Telem trace span with `run_id`, `agent_id` and `seq` attributes so
   traces and decision-log rows join on `seq`.
 
 ## 2. Initial story
@@ -263,7 +257,7 @@ Owner: TBD. The full story (characters, twists, beats) is in [story/README.md](s
   - **Stairwell collapse:** cuts off a route mid-rescue.
   - **Child goes missing:** the child slips away from the parent.
 - **Ending:** open. The agents decide, so a run can end with everyone saved, some saved or no one saved. A human
-  approves or declines the overall outcome of each run. That verdict will later feed a self-improvement loop (not built yet).
+  approves or declines the overall outcome of each run. The verdict and the commander's lessons feed the next run (section 4b).
 - **Beats (roughly 2 minutes):**
   1. Alarm, the fire starts, the robots arrive, the commander assigns floors.
   2. The scout sweeps floors 2 and 3 and finds victims. Each one reacts in character.
@@ -369,6 +363,31 @@ Behavior:
 - The cast above is the mix. The robots have to adapt to each one.
 - Optional (Runware prize): generate a portrait per persona for the decision-log panel.
 
+## 4b. Sim rules, decisions and learning
+
+`agents/sim.py` runs the world on a 1 s tick, so agents can lose. All rates are in `SPREAD` and `AIR_DRAIN` at the
+top of the file.
+
+- **Fire:** starts in `3-kitchen` at 0.35, grows 0.05/s, and spreads to neighbors (12%/s), the room above (20%/s) and
+  rarely the room below. Smoke spreads from burning rooms and rises up the stair core.
+- **Victims:** each has 100 air, drained by smoke and fire in their room. At 0 they are `lost` (`payload.cause`:
+  `air` or `fire`).
+- **Deadline:** at 150 s the building is unsafe and everyone still inside is lost (`cause: collapse`).
+- **Twists:** the stairs between floors 2 and 3 can collapse at 50 to 90 s, the child can run off, and venting can
+  cause a backdraft. Twist rows carry `payload.twist`.
+- **Resources:** the rescue robot (one unit at a time, by the stairs) and the ladder truck (one window at a time,
+  floors 1 to 4, about 24 s).
+
+Decision points, where the LLM picks one listed option (or the first option without a key):
+
+- **commander:** which found unit the rescue robot or the ladder goes for next
+- **rescue-1:** how to approach a unit (options per persona, each with a time cost and side effects)
+- **hose-1:** every 15 s, which room to fight, or ask the human to vent a floor
+
+Learning: after each run the commander writes up to 5 lessons (`learn.lessons`). On the dashboard a human approves or
+declines the run's outcome (`learn.verdicts`). The next run's prompts include recent lessons, with the declined
+runs' lessons marked as priority fixes, and the saved-per-run track record.
+
 ## 5. Firefighter agent roles
 
 Owner: TBD.
@@ -390,7 +409,7 @@ For each role, `agents/roles/<role>.md` holds:
 - Memory: short running notes kept by the orchestrator and fed back each tick.
 - Default action if the human times out.
 
-LLM: `openai.gpt-oss-120b-1:0` on Bedrock (us-east-1) through the Converse API. No sponsor offers free LLM credits, so keep prompts short and one call per agent per tick.
+LLM: `google:gemma@4-31b` (open-weight) on Runware, through its OpenAI-compatible `/v1/chat/completions` endpoint. `agents/llm.py` makes the calls and fills `model`, `latency_ms`, `tokens_in` and `tokens_out` on each event from the response's `usage`. The key is `RUNWARE_API_KEY` in the repo's gitignored `.env`, never committed.
 
 Optional (BAND prize): use BAND for commander-to-robot task delegation instead of plain function calls.
 
@@ -399,7 +418,7 @@ Optional (BAND prize): use BAND for commander-to-robot task delegation instead o
 | Time | Part 1 (data) | Parts 2, 4, 5 (agents and story) | Part 3 (3D) |
 | --- | --- | --- | --- |
 | 11:30 to 1:00 | Event schema frozen, API running locally, CDK deployed | Scenario JSON draft, role prompts, persona cards | Load scenario JSON, place static models |
-| 2:00 to 4:00 | Bruin assets and checks, schedule on ECS | Orchestrator posting events to the deployed API | Timeline replay, approval modal |
+| 2:00 to 4:00 | Bruin assets and checks, run by the API | Orchestrator posting events to the deployed API | Timeline replay, approval modal |
 | 4:00 to 5:00 | Decision-log and metrics endpoints, run compare | Several runs with different seeds | Decision-log panel, camera work |
 | 5:00 to 5:45 | Disable schedule after final runs | Pick the best run | Record film, AdaL demo video |
 | 5:45 | Push public repo, submit | | |
@@ -413,7 +432,7 @@ Optional (BAND prize): use BAND for commander-to-robot task delegation instead o
 | Animated video or simulation with visible movement and interaction | Part 3, driven by part 1 timeline |
 | Decision log of what agents decided and why | `mart.decision_log` (part 1), panel in part 3 |
 | Different runs produce different outcomes | Seeds, Director twists, human approvals; shown with `GET /runs/compare` |
-| Bruin (mandatory) | Part 1 pipeline on ECS |
+| Bruin (mandatory) | Part 1 pipeline, run by the API |
 | AdaL demo video | Section 6, last hour |
 | Public GitHub repo before 6:00 PM | Section 6 |
 | Bonus: 3D | Part 3 |
@@ -422,7 +441,7 @@ Optional (BAND prize): use BAND for commander-to-robot task delegation instead o
 
 ## 8. Open questions
 
-- Bedrock model: confirmed `openai.gpt-oss-120b-1:0` works on demand in us-east-1 (about 0.4 s for a short reply).
+- LLM: Runware `google:gemma@4-31b`, about 0.7 s for a short reply and about 1.8 s for an agent decision.
 - Who owns parts 2, 4 and 5.
 - Live SSE or replay only for the recorded film. Replay is safer for recording.
 - Whether the human approver is a teammate clicking live during recording, or scripted approvals for a repeatable take.
