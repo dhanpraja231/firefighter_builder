@@ -44,7 +44,7 @@ const shotAt = (t) => {
 const port = 9300 + Math.floor(Math.random() * 500);
 const profile = `/tmp/ff-rec-${port}`;
 const chrome = spawn(CHROME, [
-  "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--window-size=${W},${H}`,
+  ...(process.env.HEADFUL ? [] : ["--headless=new"]), `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, `--window-size=${W},${H}`,
   "--hide-scrollbars", "--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist", "--no-first-run", "about:blank",
 ], { stdio: "ignore" });
 
