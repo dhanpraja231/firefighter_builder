@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Engine9Scene } from "../scene/Engine9Scene";
-import { Character } from "../scene/characters/Character";
+import { RiggedCharacter } from "../scene/characters/RiggedCharacter";
 import { activeMomentAtTime, agentFramesAtTime, worldStateAtTime } from "../timeline/replay";
 import { visualFor } from "../timeline/roster";
 import { startingPosition } from "../timeline/startingPositions";
@@ -15,7 +15,7 @@ function easeOutCubic(x: number): number {
 }
 
 /** Renders one instant of a run: the engine's entrance, the building's WorldState, and every agent's frame. */
-export function DemoScene({ events, t }: { events: TimelineEvent[]; t: number }) {
+export function DemoScene({ events, t, paused = false }: { events: TimelineEvent[]; t: number; paused?: boolean }) {
   const entryProgress = Math.min(1, t / ENGINE_ENTRY_SECONDS);
   const engineZOffset = (1 - easeOutCubic(entryProgress)) * ENGINE_ENTRY_START_OFFSET;
   const storyT = Math.max(0, t - ENGINE_ENTRY_SECONDS);
@@ -31,7 +31,9 @@ export function DemoScene({ events, t }: { events: TimelineEvent[]; t: number })
   // Cut the camera to whoever's currently speaking/deciding -- re-fires only when the active agent changes.
   const activeMoment = useMemo(() => activeMomentAtTime(events, storyT), [events, storyT]);
   // Hold the wide establishing shot through the engine's entrance before cutting to anyone.
-  const cutsAllowed = t > ENGINE_ENTRY_SECONDS + 1.5;
+  // (A `?cam=` override pins the camera, so automatic cuts are off then.)
+  const camPinned = useMemo(() => new URLSearchParams(window.location.search).has("cam"), []);
+  const cutsAllowed = t > ENGINE_ENTRY_SECONDS + 1.5 && !camPinned;
   const [closeupCue, setCloseupCue] = useState(0);
   const lastSpeaker = useRef<string | null>(null);
   useEffect(() => {
@@ -51,21 +53,20 @@ export function DemoScene({ events, t }: { events: TimelineEvent[]; t: number })
       closeupCue={closeupTarget ? closeupCue : undefined}
       closeupTarget={closeupTarget}
     >
-      {Object.entries(frames).map(([agentId, frame]) => {
-        if (agentId === "director" || agentId === "human") return null;
-        const status = frame.status;
-        return (
-          <Character
-            key={agentId}
-            position={frame.position}
-            heading={frame.heading}
-            visual={visualFor(agentId, roleByAgent[agentId] ?? "")}
-            utterance={frame.utterance}
-            dimmed={status === "rescued" || status === "lost"}
-            moving={frame.moving}
-          />
-        );
-      })}
+      {/* Models load asynchronously; the building and fire render immediately and characters pop in. */}
+      <Suspense fallback={null}>
+        {Object.entries(frames).map(([agentId, frame]) => {
+          if (agentId === "director" || agentId === "human") return null;
+          return (
+            <RiggedCharacter
+              key={agentId}
+              visual={visualFor(agentId, roleByAgent[agentId] ?? "")}
+              frame={frame}
+              paused={paused}
+            />
+          );
+        })}
+      </Suspense>
     </Engine9Scene>
   );
 }
